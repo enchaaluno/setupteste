@@ -2,7 +2,7 @@
 
 # Versão do Encha Setup. Mantenha em sincronia com encha-setup-panel/src/lib/version.ts
 # e package.json. Fluxo de publicação documentado em encha-setup-panel/CLAUDE.md.
-ENCHA_VERSION="0.2.12"
+ENCHA_VERSION="0.2.13"
 
 # Exportado ANTES de qualquer apt/docker-ce install, inclusive dentro de
 # secondary.sh (é `source`ado neste mesmo shell — main.sh:710 — então herda

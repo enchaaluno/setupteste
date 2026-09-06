@@ -3,7 +3,7 @@
 
 # Versão do Encha Setup. Mantenha em sincronia com main.sh, encha-setup-panel/package.json
 # e encha-setup-panel/src/lib/version.ts.
-ENCHA_VERSION="0.2.12"
+ENCHA_VERSION="0.2.13"
 
 # Versão fixa da Evolution API. Mantenha em sincronia com EVOLUTION_IMAGE em
 # encha-setup-panel/src/lib/stacks/evolution.ts.

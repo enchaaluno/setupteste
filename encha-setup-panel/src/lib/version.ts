@@ -1,7 +1,7 @@
 // Versão do Encha Setup Panel — bakeada na imagem no momento do build.
 // Mantenha em sincronia com `package.json` e com `ENCHA_VERSION` em main.sh/secondary.sh.
 // O fluxo de publicação está documentado no CLAUDE.md.
-export const APP_VERSION = "0.2.12";
+export const APP_VERSION = "0.2.13";
 
 /**
  * Compara duas versões semver (X.Y.Z, com sufixo de pré-release opcional ignorado).
