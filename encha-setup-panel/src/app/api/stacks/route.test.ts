@@ -18,6 +18,7 @@ afterEach(() => {
   vi.doUnmock("@/lib/stacks/registry");
   vi.doUnmock("@/lib/stacks/updates");
   vi.doUnmock("@/lib/locale");
+  vi.doUnmock("@/lib/csrf");
 });
 
 const FAKE_ID = "fake-catalog-stack";
@@ -117,5 +118,55 @@ describe("GET /api/stacks — computeReleaseBasedPendingUpdates para stacks com 
     expect(entry.updateAvailable).toBe(true);
     expect(computePendingMock).toHaveBeenCalledTimes(1);
     expect(computeReleaseBasedMock).not.toHaveBeenCalled();
+  });
+});
+
+// C7 (S10 do plano de segurança do EnchaT) — o link de primeiro acesso
+// (setupUrl) vem pronto do installer e a rota só o repassa; accessUrl
+// continua sendo o da stack, sem token.
+describe("POST /api/stacks — setupUrl no pós-instalação", () => {
+  it("repassa result.setupUrl sem mexer no accessUrl", async () => {
+    const def = fakeDef({
+      updateViaRelease: undefined,
+      postInstall: { accessUrl: () => "https://crm.exemplo.com", setupUrl: () => "nao-deve-ser-usado-pela-rota" },
+    });
+    await setupCommonMocks(def);
+    vi.doMock("@/lib/csrf", () => ({
+      verifyOrigin: () => true,
+      verifyCsrf: async () => true,
+      getClientIp: () => "10.0.0.9",
+    }));
+    const installStack = vi.fn(async () => ({
+      ok: true,
+      stack: { Id: 42 },
+      generatedSecrets: [],
+      setupUrl: "https://crm.exemplo.com/?setup=TOKEN-DO-INSTALLER-0123456789",
+    }));
+    vi.doMock("@/lib/installer", () => ({ installStack, listInstalledStacks: vi.fn(async () => []) }));
+    vi.doMock("@/lib/portainer", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/portainer")>();
+      return {
+        ...actual,
+        discoverContext: vi.fn(async () => ({ endpointId: 1, swarmId: "s1" })),
+        listSwarmStackStatuses: vi.fn(async () => []),
+      };
+    });
+
+    const { POST } = await import("./route");
+    const req = new Request("http://painel.local/api/stacks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        stackId: FAKE_ID,
+        values: {},
+        swarmCtx: { networkName: "rede", serverName: "vps", email: "" },
+      }),
+    });
+    const res = await POST(req as unknown as import("next/server").NextRequest);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.setupUrl).toBe("https://crm.exemplo.com/?setup=TOKEN-DO-INSTALLER-0123456789");
+    expect(body.accessUrl).toBe("https://crm.exemplo.com");
   });
 });

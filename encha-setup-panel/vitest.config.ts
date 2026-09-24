@@ -5,10 +5,9 @@ import path from "node:path";
 // Ciclo 20: primeiro test runner deste repositório — antes só havia `tsc
 // --noEmit`. Ambiente padrão "node": todos os testes são lógica de
 // servidor (fingerprint, geração de YAML, validação de diretórios,
-// orquestração de installStack), sem DOM nenhum — nenhum teste deste
-// repositório usa `// @vitest-environment jsdom` hoje (o único que usava,
-// do componente TrackerEmailActivation, foi removido no Ciclo D junto com
-// o componente).
+// orquestração de installStack), sem DOM. Teste de componente declara
+// `// @vitest-environment jsdom` no topo do próprio arquivo (hoje só
+// install-wizard.test.tsx, do link de primeiro acesso do EnchaT).
 export default defineConfig({
   plugins: [react()],
   resolve: {

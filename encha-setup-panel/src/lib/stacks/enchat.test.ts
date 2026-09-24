@@ -88,3 +88,22 @@ describe("enchat — estado persistente do sidecar enchat_updater", () => {
     expect(caminhos).toContain("/var/enchat/updater");
   });
 });
+
+describe("enchat — pós-instalação", () => {
+  it("setupUrl monta https://<domínio>/?setup=<enchat_setup_token>", () => {
+    expect(enchat.postInstall!.setupUrl!(valuesValidos, secrets)).toBe(
+      `https://crm.exemplo.com/?setup=${secrets.enchat_setup_token}`
+    );
+  });
+
+  it("accessUrl continua limpo (sem token) — installer.ts o usa para bater em /api/license", () => {
+    expect(enchat.postInstall!.accessUrl!(valuesValidos)).toBe("https://crm.exemplo.com");
+  });
+
+  it("as notas citam o link de primeiro acesso, com e sem pareamento", () => {
+    const notas = enchat.postInstall!.notes as (v: Record<string, unknown>) => string[];
+    for (const v of [valuesValidos, { ...valuesValidos, licenca_pareamento_id: "0".repeat(32) }]) {
+      expect(notas(v).some((n) => n.includes("administrador"))).toBe(true);
+    }
+  });
+});

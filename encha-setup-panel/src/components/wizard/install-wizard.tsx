@@ -51,7 +51,14 @@ type ErrorState = { kind: "error"; message: string; reason?: string; httpStatus?
 type InstallState =
   | { kind: "form" }
   | { kind: "installing" }
-  | { kind: "success"; accessUrl?: string; notes: string[]; revealSecrets: RevealSecret[]; aviso?: string }
+  | {
+      kind: "success";
+      accessUrl?: string;
+      setupUrl?: string;
+      notes: string[];
+      revealSecrets: RevealSecret[];
+      aviso?: string;
+    }
   | ErrorState
   // Suporte embutido no wizard (ver suporte-panel.tsx) — `voltarPara` guarda
   // pra onde "Voltar"/"Fechar" devem devolver o usuário: o formulário (link
@@ -115,6 +122,7 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
       setState({
         kind: "success",
         accessUrl: data.accessUrl,
+        setupUrl: data.setupUrl,
         notes: data.notes ?? [],
         revealSecrets: data.revealSecrets ?? [],
         aviso: data.aviso,
@@ -220,6 +228,30 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
               >
                 {state.accessUrl}
               </a>
+            )}
+            {/* Link de primeiro acesso (ex.: EnchaT ?setup=<token>) — cria o
+                administrador. Carrega segredo, então só vive neste useState,
+                igual aos revealSecrets abaixo. */}
+            {state.setupUrl && (
+              <div className="max-w-md mx-auto text-left space-y-2 rounded-md border border-primary/40 bg-primary/10 p-3">
+                <Label className="text-xs font-semibold">{t.linkPrimeiroAcesso}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    readOnly
+                    value={state.setupUrl}
+                    className="font-mono text-xs"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => navigator.clipboard.writeText(state.setupUrl!)}
+                  >
+                    {t.copiar}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">{t.linkPrimeiroAcessoNota}</p>
+              </div>
             )}
             {state.revealSecrets.length > 0 && (
               <div className="max-w-md mx-auto text-left space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">

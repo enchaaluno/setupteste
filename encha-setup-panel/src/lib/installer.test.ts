@@ -384,3 +384,82 @@ describe("installStack — registry-auth via a extração registry-pull.ts (Cicl
     expect(deploySwarmStack).not.toHaveBeenCalled();
   });
 });
+
+// C7 (S10 do plano de segurança do EnchaT) — o link de primeiro acesso do
+// EnchaT (?setup=<enchat_setup_token>) sai do installer montado com o
+// segredo EFETIVO do deploy. Usa o generateSecrets/postInstall REAIS da
+// stack enchat numa stack sintética (sem pareamento/registry), para provar
+// o que importa: (1) o link carrega o mesmo token que foi para o YAML, e
+// (2) um reinstall reaproveita o token gravado em stack_secrets em vez de
+// sortear outro — mesmo mecanismo que já protege ENCHAT_MASTER_KEY.
+describe("installStack — setupUrl do EnchaT (token de primeiro acesso)", () => {
+  async function stackComTokenDoEnchat() {
+    const { enchat } = await import("./stacks/enchat");
+    const generateYamlSpy = vi.fn(
+      (_values: Record<string, unknown>, _secrets: Record<string, string>, _ctx: SwarmContext) =>
+        'version: "3.7"\nservices: {}\n'
+    );
+    const stack = fakeStack({
+      schema: z.object({
+        email_ativacao: z.string().email(),
+        chave_licenca: z.string().optional(),
+        url_enchat: z.string(),
+      }),
+      generateSecrets: enchat.generateSecrets,
+      generateYaml: generateYamlSpy,
+      postInstall: { accessUrl: enchat.postInstall!.accessUrl, setupUrl: enchat.postInstall!.setupUrl },
+    });
+    return { stack, generateYamlSpy };
+  }
+
+  function instalar(installStack: typeof import("./installer").installStack) {
+    return installStack({
+      stackId: FAKE_STACK_ID,
+      values: { email_ativacao: "cliente@exemplo.com", url_enchat: "crm.exemplo.com" },
+      swarmCtx: swarmCtx(),
+      token: "tok",
+      user: "tester",
+      ip: "127.0.0.1",
+    });
+  }
+
+  it("setupUrl = https://<domínio>/?setup=<o MESMO token entregue ao generateYaml>", async () => {
+    const { stack, generateYamlSpy } = await stackComTokenDoEnchat();
+    await setupMocks({ stack });
+    const { installStack } = await import("./installer");
+
+    const result = await instalar(installStack);
+
+    expect(result.ok).toBe(true);
+    const tokenNoYaml = generateYamlSpy.mock.calls[0][1].enchat_setup_token;
+    expect(tokenNoYaml).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    expect(result.setupUrl).toBe(`https://crm.exemplo.com/?setup=${tokenNoYaml}`);
+  });
+
+  it("reinstall reaproveita o token gravado — o link e o env do app não mudam", async () => {
+    const { stack, generateYamlSpy } = await stackComTokenDoEnchat();
+    await setupMocks({ stack });
+    const { installStack } = await import("./installer");
+
+    const primeira = await instalar(installStack);
+    const segunda = await instalar(installStack);
+
+    expect(primeira.ok && segunda.ok).toBe(true);
+    const tokenPrimeira = generateYamlSpy.mock.calls[0][1].enchat_setup_token;
+    const tokenSegunda = generateYamlSpy.mock.calls[1][1].enchat_setup_token;
+    expect(tokenSegunda).toBe(tokenPrimeira);
+    expect(segunda.setupUrl).toBe(primeira.setupUrl);
+  });
+
+  it("o token não vai para o audit log", async () => {
+    const { stack, generateYamlSpy } = await stackComTokenDoEnchat();
+    await setupMocks({ stack });
+    const { installStack } = await import("./installer");
+    const { listAudit } = await import("./audit");
+
+    await instalar(installStack);
+
+    const token = generateYamlSpy.mock.calls[0][1].enchat_setup_token;
+    expect(JSON.stringify(listAudit(200))).not.toContain(token);
+  });
+});

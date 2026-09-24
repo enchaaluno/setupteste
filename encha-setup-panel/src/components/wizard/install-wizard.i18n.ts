@@ -13,6 +13,8 @@ export type InstallWizardText = {
   stackImplantada: string;
   copiarAgoraAviso: string;
   copiar: string;
+  linkPrimeiroAcesso: string;
+  linkPrimeiroAcessoNota: string;
   fechar: string;
   abrirStack: (nome: string) => string;
   falhaNaInstalacao: string;
@@ -38,6 +40,9 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     stackImplantada: "Stack implantada!",
     copiarAgoraAviso: "⚠ Copie agora — não será mostrado de novo nesta tela.",
     copiar: "Copiar",
+    linkPrimeiroAcesso: "Link de primeiro acesso (criar o administrador)",
+    linkPrimeiroAcessoNota:
+      "Use uma vez para criar o administrador; se esta licença já tinha um administrador, o link abre o login.",
     fechar: "Fechar",
     abrirStack: (nome) => `Abrir ${nome}`,
     falhaNaInstalacao: "Falha na instalação",
@@ -61,6 +66,9 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     stackImplantada: "Stack deployed!",
     copiarAgoraAviso: "⚠ Copy now — it won't be shown again on this screen.",
     copiar: "Copy",
+    linkPrimeiroAcesso: "First-access link (create the administrator)",
+    linkPrimeiroAcessoNota:
+      "Use it once to create the administrator; if this license already had an administrator, the link opens the login page.",
     fechar: "Close",
     abrirStack: (nome) => `Open ${nome}`,
     falhaNaInstalacao: "Installation failed",
@@ -84,6 +92,9 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     stackImplantada: "¡Stack implementado!",
     copiarAgoraAviso: "⚠ Copie ahora — no se mostrará de nuevo en esta pantalla.",
     copiar: "Copiar",
+    linkPrimeiroAcesso: "Enlace de primer acceso (crear el administrador)",
+    linkPrimeiroAcessoNota:
+      "Úselo una vez para crear el administrador; si esta licencia ya tenía un administrador, el enlace abre el inicio de sesión.",
     fechar: "Cerrar",
     abrirStack: (nome) => `Abrir ${nome}`,
     falhaNaInstalacao: "Error en la instalación",

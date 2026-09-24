@@ -360,7 +360,14 @@ networks:
 `;
   },
   postInstall: {
+    // accessUrl fica LIMPO de propósito: installer.ts o usa para conferir o
+    // fingerprint em /api/license depois do deploy.
     accessUrl: (v) => `https://${(v as z.infer<typeof schema>).url_enchat}`,
+    // O token vai como query (?setup=): é o formato que o app lê na SPA e
+    // tira da barra de endereço assim que cria o administrador. Domínio já
+    // validado pelo schema (fqdn); token é base64url, nada a codificar.
+    setupUrl: (v, secrets) =>
+      `https://${(v as z.infer<typeof schema>).url_enchat}/?setup=${secrets.enchat_setup_token}`,
     // Função, não lista fixa: a primeira nota muda dependendo de como a
     // licença chegou. `values` aqui é o que o BROWSER submeteu (antes do
     // installer injetar a chave do pareamento) — licenca_pareamento_id
@@ -372,6 +379,7 @@ networks:
         pareado
           ? "Licença já vinculada pelo pareamento — o app deve subir ativado, sem passar pela tela de ativação."
           : "Ativação: abra o domínio e pareie pelo WhatsApp (ou digite o CPF, fluxo legado) no primeiro acesso.",
+        "Primeiro acesso: use o link de criação do administrador exibido acima, uma única vez. Se esta licença já tinha um administrador, o link abre o login normal.",
         "Guarde a ENCHAT_MASTER_KEY exibida — sem ela, os segredos gravados no banco são irrecuperáveis.",
         "O painel do Pinfy não é exposto por domínio — diagnóstico só via docker exec no container enchat_pinfy.",
       ];

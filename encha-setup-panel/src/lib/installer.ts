@@ -55,6 +55,8 @@ export type InstallResult = {
   generatedSecrets?: GeneratedSecret[];
   /** Aviso não-bloqueante pós-deploy (ex.: fingerprint divergente — ver checarFingerprintPosDeploy). Instalação já subiu; isto é só um alerta pro card final. */
   aviso?: string;
+  /** Link de primeiro acesso (StackDefinition.postInstall.setupUrl), montado com os segredos EFETIVOS do deploy. Contém segredo: só vai na resposta do POST, nunca em audit log. */
+  setupUrl?: string;
 };
 
 // Mapeia a causa estruturada de RegistryAuthError/ReleaseInfoError pro status
@@ -572,7 +574,12 @@ export async function installStack(input: InstallInput): Promise<InstallResult> 
       meta: { portainer_stack_id: stack.Id, ...(aviso ? { aviso_fingerprint: true } : {}) },
     });
 
-    return { ok: true, stack, generatedSecrets: generated, aviso };
+    // Montado aqui (e não na rota) porque só aqui existe o secretMap efetivo
+    // — com o valor reaproveitado de stack_secrets num reinstall, que é o
+    // mesmo que foi para o env do app.
+    const setupUrl = def.postInstall?.setupUrl?.(parsed.data, secretMap);
+
+    return { ok: true, stack, generatedSecrets: generated, aviso, setupUrl };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Erro desconhecido";
     const { httpStatus, reason } = statusForCause(e);

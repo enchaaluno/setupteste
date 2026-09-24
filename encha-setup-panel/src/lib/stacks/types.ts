@@ -305,6 +305,17 @@ export type StackDefinition = {
   postInstall?: {
     accessUrl?: (values: Record<string, unknown>) => string;
     /**
+     * Link de primeiro acesso que depende de um SEGREDO gerado pela stack
+     * (ex.: EnchaT: https://<domínio>/?setup=<enchat_setup_token>, que cria o
+     * primeiro administrador). Separado de `accessUrl` de propósito:
+     * `accessUrl` é a URL pública limpa (installer.ts a usa para bater em
+     * /api/license depois do deploy) e nunca pode carregar segredo.
+     * `secrets` é o mesmo mapa entregue ao generateYaml — já com os valores
+     * reaproveitados de uma instalação anterior, então o link bate com o
+     * env que o app de fato recebeu.
+     */
+    setupUrl?: (values: Record<string, unknown>, secrets: Record<string, string>) => string;
+    /**
      * Função quando as notas dependem de COMO a instalação foi feita (ex.:
      * pareamento self-service vs. chave colada à mão) — ver enchat.ts para
      * o caso real. Lista fixa quando não há essa distinção.

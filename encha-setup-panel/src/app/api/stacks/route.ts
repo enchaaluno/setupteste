@@ -255,6 +255,10 @@ export async function POST(req: NextRequest) {
     ok: true,
     stackId: result.stack?.Id,
     accessUrl: def.postInstall?.accessUrl?.(parsed.data.values),
+    // Link de primeiro acesso (contém o token de setup) — ver
+    // postInstall.setupUrl em stacks/types.ts. Mesmo raciocínio de
+    // revealSecrets abaixo: só sai nesta resposta.
+    setupUrl: result.setupUrl,
     // Não-bloqueante — ver checarFingerprintPosDeploy em installer.ts.
     aviso: result.aviso,
     // Fase 3 de i18n — resolvidas no locale da requisição.
