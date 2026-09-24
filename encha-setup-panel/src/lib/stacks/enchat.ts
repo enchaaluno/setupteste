@@ -173,6 +173,17 @@ export const enchat: StackDefinition = {
     // Compartilhado entre enchat_app e enchat_updater (Authorization: Bearer) —
     // ver cmd/enchat-updater/README.md no repo do EnchaT.
     { name: "updater_token", value: randomBytes(24).toString("hex") },
+    // Token de primeiro acesso (ENCHAT_SETUP_TOKEN, S-03 do plano de
+    // segurança do EnchaT): o app só cria o primeiro Super Admin para quem
+    // abrir https://<domínio>/?setup=<token>. Sem esta env o app gera um
+    // token sozinho e o escreve só no log do contêiner — o dono teria de
+    // caçar o link no Portainer. base64url: vai numa URL e dentro de aspas
+    // duplas no YAML, sem nada a escapar; 24 bytes = 32 caracteres (o app
+    // recusa menos de 20). Não é `reveal`: sai pronto no setupUrl do
+    // pós-instalação. Como todo segredo daqui, um reinstall reaproveita o
+    // valor gravado em stack_secrets (loadStackOwnSecrets, installer.ts), e
+    // a atualização pelo sidecar só troca a imagem do serviço — o env fica.
+    { name: "enchat_setup_token", value: randomBytes(24).toString("base64url") },
   ],
   generateYaml(values, secrets, ctx) {
     const v = values as z.infer<typeof schema>;
@@ -220,6 +231,7 @@ services:
       LICENSE_SERVER_URL: "${CONSOLE_BASE_URL}"
       ENCHAT_CANAL: "stable"
       ENCHAT_MASTER_KEY: "${secrets.enchat_master_key}"
+      ENCHAT_SETUP_TOKEN: "${secrets.enchat_setup_token}"
       ENCHAT_MACHINE_ID: "${san(ctx.machineId ?? "")}"
       LICENSE_KEY: "${san(String(values.chave_licenca ?? ""))}"
       TZ: "America/Sao_Paulo"
