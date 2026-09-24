@@ -16138,6 +16138,11 @@ ferramenta_enchat(){
   pinfy_master_key=$(openssl rand -hex 24)
   pinfy_webhook_token=$(openssl rand -hex 24)
   pinfy_panel_password=$(openssl rand -hex 24)
+  # Token de primeiro acesso (S-03 do plano de segurança do EnchaT): o app só
+  # cria o primeiro administrador para quem abrir https://<domínio>/?setup=<token>.
+  # Sem a env ele sorteia um e escreve só no log do contêiner. Mesmo formato
+  # do instalar.sh standalone (hex, 48 caracteres; o app exige >= 20).
+  enchat_setup_token=$(openssl rand -hex 24)
 
   mkdir -p /var/enchat/media /var/enchat/postgres
 
@@ -16189,6 +16194,7 @@ services:
       LICENSE_SERVER_URL: "https://console.enchat.pro"
       ENCHAT_CANAL: "stable"
       ENCHAT_MASTER_KEY: "$enchat_master_key"
+      ENCHAT_SETUP_TOKEN: "$enchat_setup_token"
       TZ: "America/Sao_Paulo"
       UPDATER_URL: ""
       UPDATER_TOKEN: ""
@@ -16313,6 +16319,7 @@ EOL
 [ ENCHAT GRÁTIS ]
 
 Painel: https://$url_enchat
+Primeiro acesso (criar o administrador, uso único): https://$url_enchat/?setup=$enchat_setup_token
 Versão: $versao_enchat
 ENCHAT_MASTER_KEY: $enchat_master_key
 Senha do Postgres: $postgres_password
@@ -16343,10 +16350,10 @@ EOL
   MSG_EN[ferramenta_enchat_proximo_passo_titulo]="\e[33m  Next step — ACTIVATION:\e[0m"
   MSG_ES[ferramenta_enchat_proximo_passo_titulo]="\e[33m  Próximo paso — ACTIVACIÓN:\e[0m"
   echo -e "$(t ferramenta_enchat_proximo_passo_titulo)"
-  MSG_PT[ferramenta_enchat_proximo_passo1]="  1. Abra https://%s no navegador (DNS já deve apontar para esta VPS)."
-  MSG_EN[ferramenta_enchat_proximo_passo1]="  1. Open https://%s in the browser (DNS should already point to this VPS)."
-  MSG_ES[ferramenta_enchat_proximo_passo1]="  1. Abra https://%s en el navegador (el DNS ya debe apuntar a este VPS)."
-  echo -e "$(t ferramenta_enchat_proximo_passo1 "$url_enchat")"
+  MSG_PT[ferramenta_enchat_proximo_passo1]="  1. Abra o link de primeiro acesso no navegador (DNS já deve apontar para esta VPS):\n     \e[97m%s\e[0m"
+  MSG_EN[ferramenta_enchat_proximo_passo1]="  1. Open the first-access link in the browser (DNS should already point to this VPS):\n     \e[97m%s\e[0m"
+  MSG_ES[ferramenta_enchat_proximo_passo1]="  1. Abra el enlace de primer acceso en el navegador (el DNS ya debe apuntar a este VPS):\n     \e[97m%s\e[0m"
+  echo -e "$(t ferramenta_enchat_proximo_passo1 "https://$url_enchat/?setup=$enchat_setup_token")"
   MSG_PT[ferramenta_enchat_proximo_passo2]="  2. Pareie pelo WhatsApp (ou digite o CPF, fluxo legado) no primeiro acesso."
   MSG_EN[ferramenta_enchat_proximo_passo2]="  2. Pair via WhatsApp (or enter the CPF, legacy flow) on first access."
   MSG_ES[ferramenta_enchat_proximo_passo2]="  2. Vincule por WhatsApp (o ingrese el CPF, flujo legado) en el primer acceso."
@@ -16355,6 +16362,10 @@ EOL
   MSG_EN[ferramenta_enchat_proximo_passo3]="  3. Create the administrator user and start using it."
   MSG_ES[ferramenta_enchat_proximo_passo3]="  3. Cree el usuario administrador y comience a usarlo."
   echo -e "$(t ferramenta_enchat_proximo_passo3)"
+  MSG_PT[ferramenta_enchat_link_uso_unico]="  O link vale uma vez, para criar o administrador; se esta licença já tinha um administrador, ele abre o login. Cópia em /root/dados_vps/dados_enchat."
+  MSG_EN[ferramenta_enchat_link_uso_unico]="  The link works once, to create the administrator; if this license already had an administrator, it opens the login page. A copy is in /root/dados_vps/dados_enchat."
+  MSG_ES[ferramenta_enchat_link_uso_unico]="  El enlace sirve una vez, para crear el administrador; si esta licencia ya tenía un administrador, abre el inicio de sesión. Copia en /root/dados_vps/dados_enchat."
+  echo -e "$(t ferramenta_enchat_link_uso_unico)"
   msg_retorno_menu
 
 }
