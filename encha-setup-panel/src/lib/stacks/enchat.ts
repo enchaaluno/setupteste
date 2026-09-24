@@ -91,7 +91,10 @@ export const enchat: StackDefinition = {
   // consegue escrever nele (achado real: upload de mídia sempre falhava com
   // "permission denied", em toda instalação já feita). postgres: SEM owner
   // — o próprio entrypoint da imagem ajusta o dono dele no boot.
-  hostDirs: [{ path: "/var/enchat/media", owner: "1000:1000" }, "/var/enchat/postgres"],
+  // updater: SEM owner — o sidecar roda como root (sem USER no Dockerfile
+  // de cmd/enchat-updater). É onde fica o STATE_FILE dele (ver
+  // enchat_updater no generateYaml).
+  hostDirs: [{ path: "/var/enchat/media", owner: "1000:1000" }, "/var/enchat/postgres", "/var/enchat/updater"],
   // licenca_pareamento_id também nunca deve ser persistido — é só uma
   // referência a uma linha de license_pairings (que já guarda a chave
   // CIFRADA); persisti-lo em stack_secrets seria redundante e aumentaria a
@@ -279,8 +282,15 @@ services:
     hostname: enchat-updater
     networks:
       - enchat_net
+    # /data guarda o STATE_FILE: progresso do update em andamento (a conexão
+    # de quem disparou morre junto com o app sendo trocado) e o histórico
+    # de versões aplicadas que o sidecar usa para recusar versão MENOR que
+    # a já aplicada. Sem volume, tudo isso sumia a cada restart do
+    # contêiner. Bind no mesmo diretório que ENCHAT GRÁTIS/swarm/
+    # docker-stack.yaml usa (/var/enchat/updater, criado via hostDirs).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /var/enchat/updater:/data
     environment:
       UPDATER_TOKEN: "${secrets.updater_token}"
       LICENSE_SERVER_URL: "${CONSOLE_BASE_URL}"
@@ -290,6 +300,7 @@ services:
       ENCHAT_IMAGEM_UPGRADE: "ghcr.io/carlosmaximiliano-cloud/enchat"
       DEPLOY_MODE: "swarm"
       SWARM_SERVICE: "enchat_enchat_app"
+      STATE_FILE: "/data/estado.json"
     deploy:
       replicas: 1
       restart_policy:

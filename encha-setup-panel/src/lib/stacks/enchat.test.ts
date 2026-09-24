@@ -75,3 +75,16 @@ describe("enchat — token de primeiro acesso (ENCHAT_SETUP_TOKEN)", () => {
     }
   });
 });
+
+describe("enchat — estado persistente do sidecar enchat_updater", () => {
+  it("o enchat_updater monta /var/enchat/updater em /data e aponta STATE_FILE para lá", () => {
+    const bloco = blocoDoServico(enchat.generateYaml(valuesValidos, secrets, ctxBase), "enchat_updater");
+    expect(bloco).toContain("- /var/enchat/updater:/data");
+    expect(bloco).toContain('STATE_FILE: "/data/estado.json"');
+  });
+
+  it("o diretório do bind mount está em hostDirs (o Swarm não cria bind mount sozinho)", () => {
+    const caminhos = (enchat.hostDirs ?? []).map((d) => (typeof d === "string" ? d : d.path));
+    expect(caminhos).toContain("/var/enchat/updater");
+  });
+});
