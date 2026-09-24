@@ -12,6 +12,29 @@ const RELEASE_TIMEOUT_MS = 8000;
 // build mais recente sem controle nenhum de rollout.
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
+// Repos de imagem aceitos por produto/edição — o painel NUNCA instala um
+// `image_repo` que o Console devolva fora daqui. A resposta de /api/version
+// não é assinada: sem esta lista, um Console comprometido (ou MITM com CA
+// comprometida) escolheria qualquer imagem de qualquer registro, e ela
+// subiria com docker.sock (sidecar) na VPS do cliente. Com a lista, o
+// máximo que uma resposta forjada consegue é escolher uma tag X.Y.Z num
+// repo nosso. Comparação EXATA (sem normalizar caixa/barra): o GHCR só
+// publica nomes minúsculos, e qualquer variação é suspeita.
+//
+// Chave = `${app}:${edicao}`, os mesmos valores de StackDefinition.release —
+// só as combinações que este painel de fato instala (stacks/enchat.ts:
+// enchat/free; stacks/encha-tracker.ts: tracker/full). Combinação fora
+// daqui = recusa (falha fechada). Publicar sob outro owner exige mudar esta
+// lista E publicar uma release do Encha Setup pela esteira do Monitor antes.
+const IMAGE_REPOS_PERMITIDOS: Readonly<Record<string, readonly string[]>> = {
+  "enchat:free": ["ghcr.io/enchainterno/enchat-free"],
+  "tracker:full": ["ghcr.io/cheiodecoisa/encha-tracker"],
+};
+
+export function imageRepoPermitido(app: string, edicao: string, imageRepo: string): boolean {
+  return (IMAGE_REPOS_PERMITIDOS[`${app}:${edicao}`] ?? []).includes(imageRepo);
+}
+
 export type ReleaseInfo = {
   version: string;
   imageRepo: string;
@@ -160,6 +183,13 @@ export async function fetchLatestRelease(
     throw new ReleaseInfoError(
       "contract",
       `O Console EnchaT devolveu uma tag de imagem fora do formato X.Y.Z ("${imageTag}") — recusado por segurança (nunca "latest").`
+    );
+  }
+
+  if (!imageRepoPermitido(app, edicao, imageRepo)) {
+    throw new ReleaseInfoError(
+      "contract",
+      `O Console EnchaT devolveu uma imagem fora da lista aceita para ${app}/${edicao} ("${imageRepo}") — recusado por segurança. Atualize o Encha Setup; se persistir, fale com o suporte.`
     );
   }
 
