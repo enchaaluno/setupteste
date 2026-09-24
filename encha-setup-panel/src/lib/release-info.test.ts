@@ -126,6 +126,16 @@ describe("fetchLatestRelease — lista de image_repo aceitos", () => {
     ["repo do EnchaT pedido como Tracker", "tracker", "full", "ghcr.io/enchainterno/enchat-free"],
     ["edição que este painel não instala", "enchat", "full", "ghcr.io/carlosmaximiliano-cloud/enchat"],
     ["vazio", "enchat", "free", ""],
+    // Formas que um refactor "normalizando o que vem do Console" (trim,
+    // cortar em @ ou :) aceitaria — e o valor CRU seguiria para o YAML
+    // (`image: ${imageRepo}:${imageTag}`, ENCHAT_IMAGEM_PADRAO), inclusive
+    // com quebra de linha: injeção de chave no compose. Auditoria C7.
+    ["digest embutido", "enchat", "free", "ghcr.io/enchainterno/enchat-free@sha256:" + "a".repeat(64)],
+    ["tag embutida", "enchat", "free", "ghcr.io/enchainterno/enchat-free:9.9.9"],
+    ["espaço no fim", "enchat", "free", "ghcr.io/enchainterno/enchat-free "],
+    ["espaço no início", "enchat", "free", " ghcr.io/enchainterno/enchat-free"],
+    ["quebra de linha (injeção no YAML)", "enchat", "free", "ghcr.io/enchainterno/enchat-free\n    privileged: true"],
+    ["@ seguido de quebra de linha", "enchat", "free", "ghcr.io/enchainterno/enchat-free@\n    privileged: true"],
   ])("recusa (%s) como contract, com mensagem citando o repo", async (_caso, app, edicao, repo) => {
     consoleDevolve(repo);
     const erro = await fetchLatestRelease("https://c.x", app, edicao, "stable").catch((e: unknown) => e);
