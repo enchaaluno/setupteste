@@ -16315,6 +16315,12 @@ EOL
   echo ""
 
   cd /root/dados_vps
+  # 600 ANTES de escrever: /root/dados_vps é 755 e bind-montado no contêiner
+  # do painel (uid 1001, ver o chmod de dados_portainer) — este arquivo leva a
+  # ENCHAT_MASTER_KEY e o link de primeiro acesso. O chmod vale também para
+  # um dados_enchat já existente (reinstalação), que o `cat >` manteria 644.
+  : > dados_enchat
+  chmod 600 dados_enchat
   cat > dados_enchat <<EOL
 [ ENCHAT GRÁTIS ]
 

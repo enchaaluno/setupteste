@@ -40,6 +40,9 @@ jobs:
       - name: paridade de tradução (MSG_PT vs MSG_EN/MSG_ES)
         run: bash i18n/check-parity.sh
 
+      - name: dados_enchat gravado com modo 600 (bloco real de secondary.sh)
+        run: bash tests/test-dados-enchat-permissao.sh
+
       - name: testes funcionais de i18n (t(), persistência de idioma)
         run: |
           bash i18n/test-t-function.sh
