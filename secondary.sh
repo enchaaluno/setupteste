@@ -16138,6 +16138,15 @@ ferramenta_enchat(){
   pinfy_master_key=$(openssl rand -hex 24)
   pinfy_webhook_token=$(openssl rand -hex 24)
   pinfy_panel_password=$(openssl rand -hex 24)
+  # Senha do papel restrito "pinfy" no Postgres (S12 C1/C2, plano de
+  # segurança do EnchaT) — o app cria/mantém esse papel no boot com ela, e o
+  # Pinfy conecta com a MESMA senha (ver DATABASE_URL do enchat_pinfy
+  # abaixo). Nunca o superusuário "enchat" mais.
+  pinfy_db_password=$(openssl rand -hex 24)
+  # Cifra (AES-256-GCM) a sessão do WhatsApp guardada pelo Pinfy no Postgres
+  # (S12 C3). GUARDE como a ENCHAT_MASTER_KEY: perdê-la faz toda instância
+  # pedir QR code de novo.
+  pinfy_session_key=$(openssl rand -hex 32)
   # Token de primeiro acesso (S-03 do plano de segurança do EnchaT): o app só
   # cria o primeiro administrador para quem abrir https://<domínio>/?setup=<token>.
   # Sem a env ele sorteia um e escreve só no log do contêiner. Mesmo formato
@@ -16182,6 +16191,7 @@ services:
       PINFY_MASTER_KEY: "$pinfy_master_key"
       PINFY_WEBHOOK_URL: "http://enchat_app:8080/api/webhooks/pinfy"
       PINFY_WEBHOOK_TOKEN: "$pinfy_webhook_token"
+      PINFY_DB_PASSWORD: "$pinfy_db_password"
       MAUTIC_BASE_URL: ""
       MAUTIC_USER: ""
       MAUTIC_PASSWORD: ""
@@ -16243,9 +16253,12 @@ services:
     networks:
       - enchat_net
     environment:
-      DATABASE_URL: "postgresql://enchat:$postgres_password@enchat_postgres:5432/enchat?schema=pinfy&sslmode=disable"
+      # Usuário restrito "pinfy" (papel criado pelo enchat_app no boot, S12
+      # C1) — nunca mais o superusuário "enchat".
+      DATABASE_URL: "postgresql://pinfy:$pinfy_db_password@enchat_postgres:5432/enchat?schema=pinfy&sslmode=disable"
       MASTER_KEY: "$pinfy_master_key"
       PANEL_PASSWORD: "$pinfy_panel_password"
+      SESSION_KEY: "$pinfy_session_key"
       LICENSE_SERVER_URL: "https://app.pinfy.fun"
       TZ: "America/Sao_Paulo"
     deploy:
@@ -16330,9 +16343,13 @@ Versão: $versao_enchat
 ENCHAT_MASTER_KEY: $enchat_master_key
 Senha do Postgres: $postgres_password
 Senha do painel Pinfy: $pinfy_panel_password
+Senha do papel Pinfy no Postgres: $pinfy_db_password
+PINFY_SESSION_KEY: $pinfy_session_key
 
 ⚠️ GUARDE a ENCHAT_MASTER_KEY em local seguro! Sem ela, os segredos
    gravados no banco são irrecuperáveis.
+⚠️ GUARDE a PINFY_SESSION_KEY também! Sem ela, toda instância do WhatsApp
+   pede QR code de novo (leads e conversas não se perdem).
 EOL
   cd
 

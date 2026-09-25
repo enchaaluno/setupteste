@@ -3,8 +3,9 @@
 # bind-montado (755) dentro do contêiner do painel, que roda como uid 1001
 # e fica exposto à Internet (ver o comentário do chmod de dados_portainer
 # em secondary.sh). Por isso todo arquivo com segredo ali precisa ser 600
-# — dados_enchat guarda a ENCHAT_MASTER_KEY, a senha do Postgres e o link
-# de primeiro acesso (?setup=<token>).
+# — dados_enchat guarda a ENCHAT_MASTER_KEY, a senha do Postgres, a senha
+# do papel restrito "pinfy" e a PINFY_SESSION_KEY (S12), e o link de
+# primeiro acesso (?setup=<token>).
 #
 # Roda o bloco REAL de ferramenta_enchat() que grava dados_enchat (extraído
 # de secondary.sh, só com /root/dados_vps trocado por um diretório
@@ -39,6 +40,8 @@ rodar() {
     enchat_master_key="MASTER-DE-TESTE"
     postgres_password="PG-DE-TESTE"
     pinfy_panel_password="PINFY-DE-TESTE"
+    pinfy_db_password="PINFY-DB-DE-TESTE"
+    pinfy_session_key="PINFY-SESSION-DE-TESTE"
     eval "$(printf '%s\n' "$bloco" | sed "s#/root/dados_vps#$dv#g")"
   )
 }
@@ -56,6 +59,12 @@ for caso in novo reinstalacao; do
     falhas=$((falhas + 1))
   elif ! grep -q "?setup=TOKEN-DE-TESTE-0123456789abcdef" "$DV/dados_enchat"; then
     echo "❌ FALHOU ($caso): dados_enchat sem o link de primeiro acesso"
+    falhas=$((falhas + 1))
+  elif ! grep -q "PINFY-DB-DE-TESTE" "$DV/dados_enchat"; then
+    echo "❌ FALHOU ($caso): dados_enchat sem a senha do papel Pinfy no Postgres (S12)"
+    falhas=$((falhas + 1))
+  elif ! grep -q "PINFY-SESSION-DE-TESTE" "$DV/dados_enchat"; then
+    echo "❌ FALHOU ($caso): dados_enchat sem a PINFY_SESSION_KEY (S12)"
     falhas=$((falhas + 1))
   else
     echo "✅ ($caso) dados_enchat gravado com modo 600 e com o link"
