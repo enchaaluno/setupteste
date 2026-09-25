@@ -313,6 +313,16 @@ services:
       ENCHAT_IMAGEM_UPGRADE: "ghcr.io/carlosmaximiliano-cloud/enchat"
       DEPLOY_MODE: "swarm"
       SWARM_SERVICE: "enchat_enchat_app"
+      # Pinfy bundled: sem PINFY_SERVICE o sidecar atualiza o app e NUNCA o
+      # Pinfy (README do enchat-updater), deixando os dois em versões
+      # diferentes depois da primeira atualização em 1 clique. Mesmo contrato
+      # de ENCHAT GRÁTIS/swarm/docker-stack.yaml, com os nomes DESTA stack:
+      # o serviço é enchat_pinfy no YAML e enchat_enchat_pinfy no Swarm
+      # (stack "enchat" + chave), igual ao SWARM_SERVICE do app acima.
+      PINFY_SERVICE: "enchat_pinfy"
+      PINFY_SWARM_SERVICE: "enchat_enchat_pinfy"
+      PINFY_HEALTHZ_URL: "http://enchat_pinfy:3000/api/health"
+      HEALTHZ_URL: "http://enchat_app:8080/api/healthz"
       STATE_FILE: "/data/estado.json"
     deploy:
       replicas: 1

@@ -85,6 +85,22 @@ describe("enchat — estado persistente do sidecar enchat_updater", () => {
     expect(bloco).toContain('STATE_FILE: "/data/estado.json"');
   });
 
+  it("o updater também atualiza o Pinfy bundled (PINFY_* apontam para os serviços DESTA stack)", () => {
+    const yaml = enchat.generateYaml(valuesValidos, secrets, ctxBase);
+    const updater = blocoDoServico(yaml, "enchat_updater");
+    // Os serviços referenciados existem no próprio YAML, com as portas certas.
+    expect(blocoDoServico(yaml, "enchat_pinfy")).toBeTruthy();
+    expect(updater).toContain('PINFY_SERVICE: "enchat_pinfy"');
+    // Swarm nomeia <stack>_<serviço>; a stack do painel se chama "enchat"
+    // (installer.ts: stackId sem hífens) — mesmo padrão do SWARM_SERVICE do app.
+    expect(updater).toContain('SWARM_SERVICE: "enchat_enchat_app"');
+    expect(updater).toContain('PINFY_SWARM_SERVICE: "enchat_enchat_pinfy"');
+    expect(updater).toContain('PINFY_HEALTHZ_URL: "http://enchat_pinfy:3000/api/health"');
+    expect(updater).toContain('HEALTHZ_URL: "http://enchat_app:8080/api/healthz"');
+    // Em Swarm, PINFY_SERVICE sem PINFY_SWARM_SERVICE derruba o boot do sidecar.
+    expect(updater).toMatch(/PINFY_SERVICE:[\s\S]*PINFY_SWARM_SERVICE:/);
+  });
+
   it("o diretório do bind mount está em hostDirs (o Swarm não cria bind mount sozinho)", () => {
     const caminhos = (enchat.hostDirs ?? []).map((d) => (typeof d === "string" ? d : d.path));
     expect(caminhos).toContain("/var/enchat/updater");
