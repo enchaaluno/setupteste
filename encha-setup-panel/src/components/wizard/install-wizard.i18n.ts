@@ -16,6 +16,7 @@ export type InstallWizardText = {
   copiar: string;
   linkPrimeiroAcesso: string;
   linkPrimeiroAcessoNota: string;
+  abrirPrimeiroAcesso: string;
   fechar: string;
   abrirStack: (nome: string) => string;
   falhaNaInstalacao: string;
@@ -45,6 +46,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     linkPrimeiroAcesso: "Link de primeiro acesso (criar o administrador)",
     linkPrimeiroAcessoNota:
       "Use uma vez para criar o administrador; se esta licença já tinha um administrador, o link abre o login.",
+    abrirPrimeiroAcesso: "Abrir link",
     fechar: "Fechar",
     abrirStack: (nome) => `Abrir ${nome}`,
     falhaNaInstalacao: "Falha na instalação",
@@ -72,6 +74,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     linkPrimeiroAcesso: "First-access link (create the administrator)",
     linkPrimeiroAcessoNota:
       "Use it once to create the administrator; if this license already had an administrator, the link opens the login page.",
+    abrirPrimeiroAcesso: "Open link",
     fechar: "Close",
     abrirStack: (nome) => `Open ${nome}`,
     falhaNaInstalacao: "Installation failed",
@@ -99,6 +102,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     linkPrimeiroAcesso: "Enlace de primer acceso (crear el administrador)",
     linkPrimeiroAcessoNota:
       "Úselo una vez para crear el administrador; si esta licencia ya tenía un administrador, el enlace abre el inicio de sesión.",
+    abrirPrimeiroAcesso: "Abrir enlace",
     fechar: "Cerrar",
     abrirStack: (nome) => `Abrir ${nome}`,
     falhaNaInstalacao: "Error en la instalación",

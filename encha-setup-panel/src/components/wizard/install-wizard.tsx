@@ -321,9 +321,12 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
                       somem quando o componente desmonta; fechar junto do
                       clique destruiria o que o aviso pede pra copiar antes.
                       "Fechar" continua disponível ao lado, e Esc/clique fora/✕
-                      já cobrem quem só quer sair. */}
+                      já cobrem quem só quer sair.
+                      Com setupUrl (EnchaT), o botão abre o link COM o token de
+                      primeiro acesso: o accessUrl limpo levava à tela bloqueada
+                      "criar o primeiro acesso exige o link de configuração". */}
                   <Button asChild>
-                    <a href={state.accessUrl} target="_blank" rel="noopener noreferrer">
+                    <a href={state.setupUrl ?? state.accessUrl} target="_blank" rel="noopener noreferrer">
                       {t.abrirStack(stack.name)}
                     </a>
                   </Button>

@@ -8,6 +8,7 @@ import { useLocale } from "@/components/locale-provider";
 import { toBcp47 } from "@/lib/locale-shared";
 import { useDict } from "@/lib/i18n/use-dict";
 import { stacksPageText } from "./page.i18n";
+import { PrimeiroAcessoCard } from "@/components/primeiro-acesso-card";
 
 type InstalledStack = { id: number; name: string; createdAt: number; external?: boolean };
 
@@ -74,6 +75,7 @@ export default function StacksPage() {
                 <div className="text-xs text-muted-foreground">
                   {t.installedAt(new Date(s.createdAt * 1000).toLocaleString(toBcp47(locale)))}
                 </div>
+                {s.name === "enchat" && <PrimeiroAcessoCard stackId="enchat" />}
               </CardContent>
             </Card>
           ))}

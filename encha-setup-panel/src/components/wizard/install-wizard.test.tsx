@@ -63,6 +63,28 @@ describe("InstallWizard — link de primeiro acesso", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(SETUP_URL));
   });
 
+  it("o botão 'Abrir' abre o link COM o token (o endereço limpo cai na tela bloqueada)", async () => {
+    await instalarAteSucesso({
+      ok: true,
+      accessUrl: "https://crm.exemplo.com",
+      setupUrl: SETUP_URL,
+      notes: [],
+      revealSecrets: [],
+    });
+    expect(screen.getByRole("link", { name: installWizardText.pt.abrirStack("EnchaT Grátis") })).toHaveAttribute(
+      "href",
+      SETUP_URL
+    );
+  });
+
+  it("sem setupUrl o botão 'Abrir' continua no accessUrl", async () => {
+    await instalarAteSucesso({ ok: true, accessUrl: "https://x.exemplo.com", notes: [], revealSecrets: [] });
+    expect(screen.getByRole("link", { name: installWizardText.pt.abrirStack("EnchaT Grátis") })).toHaveAttribute(
+      "href",
+      "https://x.exemplo.com"
+    );
+  });
+
   it("sem setupUrl (stack que não tem link de setup) o bloco não aparece", async () => {
     await instalarAteSucesso({ ok: true, accessUrl: "https://x.exemplo.com", notes: [], revealSecrets: [] });
     expect(screen.queryByText(installWizardText.pt.linkPrimeiroAcesso)).not.toBeInTheDocument();

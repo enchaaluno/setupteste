@@ -47,7 +47,11 @@ export type AuditAction =
   | "suporte.abrir"
   | "suporte.abrir.fail"
   | "suporte.anexo"
-  | "suporte.anexo.fail";
+  | "suporte.anexo.fail"
+  // Consulta do link de primeiro acesso (?setup=) de uma stack instalada.
+  // Nunca o token nem o link no `meta` — só se o link foi entregue ou se o
+  // administrador já existia.
+  | "stack.primeiro_acesso";
 
 export type AuditEntry = {
   user: string;
