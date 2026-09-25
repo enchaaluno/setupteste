@@ -4,7 +4,7 @@ import { requireSessionToken } from "@/lib/auth/require-token";
 import { verifyCsrf, verifyOrigin, getClientIp } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getStack } from "@/lib/stacks/registry";
-import { buscarPareamento } from "@/lib/pairing-store";
+import { buscarPareamento, falharPareamento } from "@/lib/pairing-store";
 import { pairCpf, PairingError } from "@/lib/license-pairing";
 import { logAudit } from "@/lib/audit";
 import { resolveLocale } from "@/lib/locale";
@@ -31,6 +31,15 @@ const ERROS = {
     es: "El stack no tiene emparejamiento de licencia",
   },
   sessao_nao_encontrada: { pt: "Sessão não encontrada", en: "Session not found", es: "Sesión no encontrada" },
+  // Console devolveu 404/410: a sessão de pareamento não existe mais lá
+  // (expirou ou foi apagada). Distinto de "cpf não confere" — o cliente
+  // troca o card por "expirado / gere outro código" em vez de deixar o
+  // usuário retentar o CPF contra uma sessão morta.
+  sessao_expirada: {
+    pt: "A sessão de pareamento expirou — gere um novo código",
+    en: "The pairing session expired — generate a new code",
+    es: "La sesión de emparejamiento expiró — genere un nuevo código",
+  },
   nao_confirmou_cpf: {
     pt: "Não foi possível confirmar com este CPF — confira os dados e tente de novo",
     en: "Could not confirm with this CPF — check the details and try again",
@@ -102,6 +111,14 @@ export async function POST(req: NextRequest) {
       if (typeof e.body?.tentativas_restantes === "number") tentativasRestantes = e.body.tentativas_restantes;
     }
     logAudit({ user: session.user, ip, action: "license.pair.cpf.fail", target: stackId, result: "error", meta });
+
+    // Sessão inexistente/expirada no Console: terminal. Libera o slot local
+    // (senão "Gerar outro código" retoma a mesma sessão morta) e NÃO cai no
+    // "nao_confirmou_cpf" abaixo, que fingia ser um erro de CPF.
+    if (e instanceof PairingError && e.reason === "not_found") {
+      falharPareamento(pairingId);
+      return apiError(ERROS, "sessao_expirada", locale, 410);
+    }
 
     // cpf_nao_confere/aguardando_credencial (Fase 2) SÃO revelados — quem
     // chega aqui já provou posse de um WhatsApp cadastrado, então só

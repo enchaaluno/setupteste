@@ -4,14 +4,16 @@ import { requireSessionToken } from "@/lib/auth/require-token";
 import { verifyCsrf, verifyOrigin, getClientIp } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getStack } from "@/lib/stacks/registry";
-import { getOrCreateMachineId, pareamentoAtivo, criarPareamento } from "@/lib/pairing-store";
+import { getOrCreateMachineId, pareamentoAtivo, criarPareamento, falharPareamento } from "@/lib/pairing-store";
 import { pairStart, PairingError } from "@/lib/license-pairing";
 import { fetchLatestRelease, ReleaseInfoError } from "@/lib/release-info";
 import { logAudit } from "@/lib/audit";
 import { resolveLocale } from "@/lib/locale";
 import { apiError, unauthenticatedResponse } from "@/lib/api-error";
 
-const bodySchema = z.object({ stackId: z.string().min(1).max(60) });
+// novo=true: "Gerar outro código" — o usuário pediu explicitamente uma sessão
+// nova, então uma sessão 'aberto' existente é descartada em vez de retomada.
+const bodySchema = z.object({ stackId: z.string().min(1).max(60), novo: z.boolean().optional() });
 
 const ERROS = {
   origem_invalida: { pt: "Origem inválida", en: "Invalid origin", es: "Origen inválido" },
@@ -63,7 +65,7 @@ export async function POST(req: NextRequest) {
   }
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return apiError(ERROS, "corpo_invalido", locale, 400);
-  const { stackId } = parsed.data;
+  const { stackId, novo } = parsed.data;
 
   const def = getStack(stackId);
   if (!def?.pairing) return apiError(ERROS, "stack_sem_pareamento", locale, 404);
@@ -89,7 +91,15 @@ export async function POST(req: NextRequest) {
   // que já está aberta/confirmada, com os MESMOS campos de exibição da
   // resposta original (wa_link/wa_qr_svg/etc. persistidos em criarPareamento
   // exatamente pra isto — nem o Console nem o poll os reenviam depois).
-  const existente = pareamentoAtivo(stackId);
+  let existente = pareamentoAtivo(stackId);
+  // "Gerar outro código": descarta só uma sessão ainda 'aberto'. Uma
+  // 'confirmado' já carrega a chave emitida (chave_encrypted) esperando o
+  // install consumir — descartá-la perderia a licença; nesse caso a
+  // retomada abaixo continua valendo.
+  if (novo && existente?.status === "aberto") {
+    falharPareamento(existente.id);
+    existente = null;
+  }
   if (existente) {
     return NextResponse.json({
       pairingId: existente.id,

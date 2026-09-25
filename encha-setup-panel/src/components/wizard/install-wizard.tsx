@@ -82,6 +82,14 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
 
   const groups = Array.from(new Set(stack.fields.map((f) => f.group ?? t.defaultGroup)));
 
+  // Stack com pareamento de licença: sem sessão confirmada (sessionField) nem
+  // chave colada à mão (targetField) o schema do servidor recusa o install, e
+  // o usuário só via um "Falha na instalação" genérico. Bloqueia o botão em
+  // vez de deixar chegar lá. form.watch re-renderiza quando o pareamento
+  // confirma (LicensePairing faz form.setValue no sessionField).
+  const semLicenca =
+    !!stack.pairing && !form.watch(stack.pairing.sessionField) && !form.watch(stack.pairing.targetField);
+
   async function onSubmit(rawValues: Record<string, unknown>) {
     setState({ kind: "installing" });
     // Campos opcionais deixados em branco chegam como "" (default do form),
@@ -196,8 +204,9 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
             ))}
             <div className="flex justify-end gap-2 pt-4 border-t">
               <Button type="button" variant="outline" onClick={onClose}>{t.cancelar}</Button>
-              <Button type="submit">{t.instalar}</Button>
+              <Button type="submit" disabled={semLicenca}>{t.instalar}</Button>
             </div>
+            {semLicenca && <p className="text-xs text-muted-foreground text-right">{t.concluaLicencaParaInstalar}</p>}
             <button
               type="button"
               onClick={() => setState({ kind: "suporte", voltarPara: { kind: "form" } })}

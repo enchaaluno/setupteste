@@ -110,6 +110,15 @@ export async function POST(req: NextRequest) {
       if (e.serverDetail !== undefined) meta.serverDetail = e.serverDetail;
     }
     logAudit({ user: session.user, ip, action: "license.pair.poll.fail", target: stackId, result: "error", meta });
+    // 404/410 do Console = a sessão não existe mais lá (expirou, foi
+    // apagada). Isso é terminal, ao contrário de um erro de rede: sem marcar
+    // 'falhou', a linha local ficava 'aberto' pra sempre — o poll martelava
+    // uma sessão morta e "Gerar outro código" (pair/start) retomava o mesmo
+    // código, já que pareamentoAtivo() ainda o via como ativo.
+    if (e instanceof PairingError && e.reason === "not_found") {
+      falharPareamento(pairingId);
+      return NextResponse.json({ status: "expirado" });
+    }
     // Erro de transporte no poll NÃO falha a sessão (ela pode se recuperar
     // no próximo poll, igual ao app Go) — devolve "aguardando" em vez de
     // matar o pareamento por uma falha transitória de rede.

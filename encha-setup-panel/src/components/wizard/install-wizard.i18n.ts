@@ -8,6 +8,7 @@ export type InstallWizardText = {
   mostrar: string;
   cancelar: string;
   instalar: string;
+  concluaLicencaParaInstalar: string;
   ajudaAntesDeInstalar: string;
   implantandoNoSwarm: string;
   stackImplantada: string;
@@ -35,6 +36,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     mostrar: "Mostrar",
     cancelar: "Cancelar",
     instalar: "Instalar",
+    concluaLicencaParaInstalar: "Conclua o pareamento da licença acima, ou informe uma chave, para poder instalar.",
     ajudaAntesDeInstalar: "Precisa de ajuda antes de instalar? Fale com o suporte",
     implantandoNoSwarm: "Implantando no Swarm via Portainer API...",
     stackImplantada: "Stack implantada!",
@@ -61,6 +63,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     mostrar: "Show",
     cancelar: "Cancel",
     instalar: "Install",
+    concluaLicencaParaInstalar: "Finish the license pairing above, or enter a key, to be able to install.",
     ajudaAntesDeInstalar: "Need help before installing? Talk to support",
     implantandoNoSwarm: "Deploying to Swarm via Portainer API...",
     stackImplantada: "Stack deployed!",
@@ -87,6 +90,7 @@ export const installWizardText: Record<Locale, InstallWizardText> = {
     mostrar: "Mostrar",
     cancelar: "Cancelar",
     instalar: "Instalar",
+    concluaLicencaParaInstalar: "Complete el emparejamiento de la licencia arriba, o ingrese una clave, para poder instalar.",
     ajudaAntesDeInstalar: "¿Necesita ayuda antes de instalar? Hable con soporte",
     implantandoNoSwarm: "Implementando en Swarm vía Portainer API...",
     stackImplantada: "¡Stack implementado!",

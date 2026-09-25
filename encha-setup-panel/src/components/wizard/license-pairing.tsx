@@ -170,17 +170,24 @@ export function LicensePairing({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = new Error((data as { error?: string }).error ?? `HTTP ${res.status}`) as Error & { data?: unknown };
+      // message = frase já traduzida pelo servidor (apiError); error = código
+      // estável, que só serve pra lógica (fica em err.data.error). Mostrar o
+      // código cru na tela ("nao_confirmou_cpf") era o bug.
+      const corpo = data as { error?: string; message?: string };
+      const err = new Error(corpo.message ?? corpo.error ?? `HTTP ${res.status}`) as Error & { data?: unknown };
       err.data = data;
       throw err;
     }
     return data;
   }
 
-  async function iniciar() {
+  // novo=true só no botão "Gerar outro código": pede ao servidor pra descartar
+  // a sessão aberta em vez de retomá-la (reabrir o modal continua retomando,
+  // pra não gastar as 5 tentativas/hora do Console).
+  async function iniciar(novo = false) {
     setEtapa({ kind: "iniciando" });
     try {
-      const d = await chamar("pair/start", {});
+      const d = await chamar("pair/start", novo ? { novo: true } : {});
       if (d.status === "confirmado") {
         // Retomada de um pareamento já confirmado antes (modal fechado e
         // reaberto depois da confirmação, mas antes do install consumir).
@@ -202,7 +209,7 @@ export function LicensePairing({
       });
       iniciarPoll(d.pairingId as string);
     } catch (e) {
-      const data = (e as { data?: { legacy?: boolean; error?: string } }).data;
+      const data = (e as { data?: { legacy?: boolean; error?: string; message?: string } }).data;
       if (data?.legacy) {
         // Instalação anterior a este mecanismo — pareamento mudaria o
         // fingerprint de uma licença possivelmente já ativa. Cai pro
@@ -215,7 +222,15 @@ export function LicensePairing({
       // quando o código bate com um motivo conhecido, senão cai no
       // fallback genérico do dicionário.
       const codigo = data?.error ?? (e instanceof Error ? e.message : undefined);
-      const mensagem = codigo && MOTIVOS_RECUSA_CONHECIDOS.has(codigo) ? t.mensagemRecusa(codigo) : t.erroGenericoPareamento;
+      // "muitas_tentativas" (429 do rate limit local) traz "aguarde Ns" já
+      // traduzido em message — é a única resposta cuja frase o usuário
+      // precisa ver, porque a ação certa é esperar, não tentar de novo.
+      const mensagem =
+        codigo === "muitas_tentativas" && data?.message
+          ? data.message
+          : codigo && MOTIVOS_RECUSA_CONHECIDOS.has(codigo)
+            ? t.mensagemRecusa(codigo)
+            : t.erroGenericoPareamento;
       setEtapa({ kind: "erro", mensagem });
     }
   }
@@ -294,6 +309,13 @@ export function LicensePairing({
         // 2ª tentativa errada — Fase 2: destrava com email+senha em vez de
         // exigir suporte. Não é um erro de transporte nem de digitação.
         setEtapa({ kind: "aguardando_credencial", pairingId });
+        return;
+      }
+      if (data?.error === "sessao_expirada") {
+        // Console não conhece mais esta sessão (expirou / foi apagada):
+        // retentar o CPF é inútil — para de pollar e oferece novo código.
+        pararPoll();
+        setEtapa({ kind: "expirado" });
         return;
       }
       if (data?.error === "cpf_nao_confere") {
@@ -410,7 +432,7 @@ export function LicensePairing({
     return (
       <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3">
         <p className="text-sm text-destructive">{etapa.mensagem}</p>
-        <Button type="button" variant="outline" size="sm" onClick={iniciar}>
+        <Button type="button" variant="outline" size="sm" onClick={() => iniciar()}>
           <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
           {t.tentarDeNovo}
         </Button>
@@ -526,7 +548,7 @@ export function LicensePairing({
           </Button>
         ) : (
           !semRetryUtil && (
-            <Button type="button" variant="outline" size="sm" onClick={iniciar}>
+            <Button type="button" variant="outline" size="sm" onClick={() => iniciar(true)}>
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
               {t.gerarOutroCodigo}
             </Button>
@@ -690,7 +712,7 @@ export function LicensePairing({
             {t.aindaNaoTenhoConta}
           </a>
         )}
-        <button type="button" onClick={iniciar} className="text-muted-foreground hover:text-foreground ml-auto">
+        <button type="button" onClick={() => iniciar(true)} className="text-muted-foreground hover:text-foreground ml-auto">
           {t.gerarOutroCodigo}
         </button>
       </div>
