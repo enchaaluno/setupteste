@@ -2,7 +2,7 @@
 
 # Versão do Encha Setup. Mantenha em sincronia com encha-setup-panel/src/lib/version.ts
 # e package.json. Fluxo de publicação documentado em encha-setup-panel/CLAUDE.md.
-ENCHA_VERSION="0.3.1"
+ENCHA_VERSION="0.3.2"
 
 # Branch de onde este instalador baixa secondary.sh e a fonte do painel
 # (download_secondary, preparar_fonte_painel). SEMPRE "main" em produção —
