@@ -24,7 +24,10 @@ type Field = {
   group?: string;
 };
 
-type PairingSpecUI = { targetField: string; sessionField: string; group?: string };
+// Sem `group`: o servidor traduz o grupo dos campos por idioma mas nunca
+// traduziu o do pareamento, então comparar os dois nomes não batia em EN/ES
+// e o card sumia. O lugar do card é decidido pelo campo (ver grupoDoPareamento).
+type PairingSpecUI = { targetField: string; sessionField: string };
 
 type StackMeta = {
   id: string;
@@ -81,6 +84,19 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
   }, [open]);
 
   const groups = Array.from(new Set(stack.fields.map((f) => f.group ?? t.defaultGroup)));
+
+  // O card de pareamento vai no grupo do campo que ele preenche à mão
+  // (targetField = a chave de licença) — o nome do grupo já chega traduzido
+  // no idioma da tela, então é a única referência que vale em pt/en/es.
+  // Se nenhum campo casar (stack mal configurada), cai no primeiro grupo:
+  // o card nunca pode sumir, senão o botão Instalar (semLicenca) trava sem
+  // saída.
+  const grupoDoPareamento = stack.pairing
+    ? (() => {
+        const alvo = stack.fields.find((f) => f.name === stack.pairing!.targetField);
+        return alvo ? (alvo.group ?? t.defaultGroup) : groups[0];
+      })()
+    : undefined;
 
   // Stack com pareamento de licença: sem sessão confirmada (sessionField) nem
   // chave colada à mão (targetField) o schema do servidor recusa o install, e
@@ -154,7 +170,7 @@ export function InstallWizard({ stack, open, onClose, onInstalled, csrfToken, sw
             {groups.map((g) => (
               <div key={g} className="space-y-3">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{g}</div>
-                {stack.pairing && (stack.pairing.group ?? t.defaultGroup) === g && (
+                {stack.pairing && grupoDoPareamento === g && (
                   <LicensePairing stackId={stack.id} csrfToken={csrfToken} spec={stack.pairing} form={form} />
                 )}
                 {stack.fields

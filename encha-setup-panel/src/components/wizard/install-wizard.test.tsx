@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { InstallWizard } from "./install-wizard";
 import { installWizardText } from "./install-wizard.i18n";
 import { licensePairingText } from "./license-pairing.i18n";
+import { LocaleProvider } from "@/components/locale-provider";
+import type { Locale } from "@/lib/locale-shared";
 
 // C7 (S10 do plano de segurança do EnchaT) — o card de sucesso mostra o
 // link de primeiro acesso (setupUrl) com botão de copiar e a nota de uso
@@ -201,4 +203,79 @@ describe("LicensePairing — sessão morta e 'Gerar outro código'", () => {
     expect(screen.queryByText("ENCHAT-MORTO1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: licensePairingText.pt.gerarOutroCodigo })).toBeInTheDocument();
   }, 10000);
+});
+
+// O servidor traduz o `group` dos campos por idioma ("Licença" -> "License" /
+// "Licencia"), mas o pareamento sempre saiu com o grupo em pt. O wizard
+// comparava os dois nomes, então em EN/ES o card de pareamento nunca aparecia
+// (e "Instalar" ficava bloqueado esperando um pareamento invisível).
+
+const GRUPOS_POR_IDIOMA: Record<Locale, { dominios: string; licenca: string }> = {
+  pt: { dominios: "Domínios", licenca: "Licença" },
+  en: { dominios: "Domains", licenca: "License" },
+  es: { dominios: "Dominios", licenca: "Licencia" },
+};
+
+function stackTraduzida(locale: Locale, alvoPareamento = "chave_licenca") {
+  const g = GRUPOS_POR_IDIOMA[locale];
+  return {
+    id: "enchat",
+    name: "EnchaT Grátis",
+    description: "teste",
+    fields: [
+      { name: "url_enchat", label: "Domínio", kind: "text", group: g.dominios },
+      { name: "chave_licenca", label: "Chave", kind: "text", optional: true, group: g.licenca },
+    ],
+    // Payload como o servidor antigo mandava: pairing.group SEMPRE em pt.
+    pairing: { targetField: alvoPareamento, sessionField: "licenca_pareamento_id", group: "Licença" },
+  };
+}
+
+function renderNoIdioma(locale: Locale, stack: ReturnType<typeof stackTraduzida>) {
+  return render(
+    <LocaleProvider initialLocale={locale}>
+      <InstallWizard
+        stack={stack}
+        open
+        onClose={() => {}}
+        csrfToken="csrf"
+        swarmCtx={{ networkName: "rede", serverName: "vps", email: "" }}
+      />
+    </LocaleProvider>
+  );
+}
+
+describe("InstallWizard — card de pareamento em qualquer idioma", () => {
+  it.each(["pt", "en", "es"] as const)("%s: o card aparece e o pair/start é chamado", async (locale) => {
+    const chamadas = stubPareamento({
+      "pair/start": sessaoAberta("ENCHAT-IDIOMA1"),
+      "pair/poll": () => ({ status: "aguardando" }),
+    });
+    renderNoIdioma(locale, stackTraduzida(locale));
+
+    await screen.findByText("ENCHAT-IDIOMA1");
+    expect(chamadas.some((c) => c.path === "pair/start")).toBe(true);
+  });
+
+  it.each(["en", "es"] as const)("%s: o card fica no grupo da licença, não no dos domínios", async (locale) => {
+    stubPareamento({ "pair/start": sessaoAberta("ENCHAT-IDIOMA2"), "pair/poll": () => ({ status: "aguardando" }) });
+    renderNoIdioma(locale, stackTraduzida(locale));
+
+    const codigo = await screen.findByText("ENCHAT-IDIOMA2");
+    const tituloLicenca = screen.getByText(GRUPOS_POR_IDIOMA[locale].licenca);
+    const tituloDominios = screen.getByText(GRUPOS_POR_IDIOMA[locale].dominios);
+    // O card vem DEPOIS do título do grupo da licença e ANTES do grupo seguinte/campos dele.
+    expect(tituloLicenca.compareDocumentPosition(codigo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tituloDominios.compareDocumentPosition(codigo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tituloLicenca.parentElement!.contains(codigo)).toBe(true);
+    expect(tituloDominios.parentElement!.contains(codigo)).toBe(false);
+  });
+
+  it("targetField que não existe nos campos: o card não some (cai no primeiro grupo)", async () => {
+    stubPareamento({ "pair/start": sessaoAberta("ENCHAT-FALLBK"), "pair/poll": () => ({ status: "aguardando" }) });
+    renderNoIdioma("en", stackTraduzida("en", "campo_inexistente"));
+
+    const codigo = await screen.findByText("ENCHAT-FALLBK");
+    expect(screen.getByText(GRUPOS_POR_IDIOMA.en.dominios).parentElement!.contains(codigo)).toBe(true);
+  });
 });

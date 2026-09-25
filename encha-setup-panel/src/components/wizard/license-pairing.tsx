@@ -22,7 +22,7 @@ import { licensePairingText, type LicensePairingText } from "./license-pairing.i
 // convivem: este componente é o caminho principal, o campo de texto é o
 // fallback pra quem já tem uma chave.
 
-type PairingSpecUI = { targetField: string; sessionField: string; group?: string };
+type PairingSpecUI = { targetField: string; sessionField: string };
 
 type Etapa =
   | { kind: "iniciando" }

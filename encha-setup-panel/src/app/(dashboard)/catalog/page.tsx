@@ -25,7 +25,7 @@ type Field = {
   group?: string;
 };
 
-type PairingSpecUI = { targetField: string; sessionField: string; group?: string };
+type PairingSpecUI = { targetField: string; sessionField: string };
 
 type FullStack = CatalogEntry & { fields?: Field[]; pairing?: PairingSpecUI | null };
 
