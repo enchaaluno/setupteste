@@ -173,6 +173,18 @@ export const enchat: StackDefinition = {
     { name: "pinfy_master_key", value: randomBytes(24).toString("hex") },
     { name: "pinfy_webhook_token", value: randomBytes(24).toString("hex") },
     { name: "pinfy_panel_password", value: randomBytes(24).toString("hex") },
+    // Senha do papel restrito "pinfy" no Postgres (plano de segurança do
+    // EnchaT, S12 C1/C2): o app cria/mantém esse papel no boot com ela, e o
+    // Pinfy conecta com a MESMA senha (DATABASE_URL, abaixo) — nunca mais o
+    // superusuário "enchat". Como todo segredo daqui, sai direto na fase B
+    // (a release deste painel só sai depois de uma release ESTÁVEL do
+    // EnchaT com o C1 publicada — ver docs/SEGURANCA-RELEASE.md do repo
+    // ENCHAT, seção 5), então não existe uma "fase A" aqui.
+    { name: "pinfy_db_password", value: randomBytes(24).toString("hex") },
+    // Cifra (AES-256-GCM) a sessão do WhatsApp guardada pelo Pinfy no
+    // Postgres (S12 C3). GUARDE como a enchat_master_key: perdê-la faz toda
+    // instância pedir QR code de novo (leads e conversas não se perdem).
+    { name: "pinfy_session_key", value: randomBytes(32).toString("hex"), reveal: true },
     // Compartilhado entre enchat_app e enchat_updater (Authorization: Bearer) —
     // ver cmd/enchat-updater/README.md no repo do EnchaT.
     { name: "updater_token", value: randomBytes(24).toString("hex") },
@@ -222,6 +234,7 @@ services:
       PINFY_MASTER_KEY: "${secrets.pinfy_master_key}"
       PINFY_WEBHOOK_URL: "http://enchat_app:8080/api/webhooks/pinfy"
       PINFY_WEBHOOK_TOKEN: "${secrets.pinfy_webhook_token}"
+      PINFY_DB_PASSWORD: "${secrets.pinfy_db_password}"
       MAUTIC_BASE_URL: ""
       MAUTIC_USER: ""
       MAUTIC_PASSWORD: ""
@@ -319,9 +332,12 @@ services:
     networks:
       - enchat_net
     environment:
-      DATABASE_URL: "postgresql://enchat:${secrets.postgres_password}@enchat_postgres:5432/enchat?schema=pinfy&sslmode=disable"
+      # Usuário restrito "pinfy" (papel criado pelo enchat_app no boot, S12
+      # C1) — nunca mais o superusuário "enchat".
+      DATABASE_URL: "postgresql://pinfy:${secrets.pinfy_db_password}@enchat_postgres:5432/enchat?schema=pinfy&sslmode=disable"
       MASTER_KEY: "${secrets.pinfy_master_key}"
       PANEL_PASSWORD: "${secrets.pinfy_panel_password}"
+      SESSION_KEY: "${secrets.pinfy_session_key}"
       LICENSE_SERVER_URL: "${PINFY_LICENSE_SERVER_URL}"
       TZ: "America/Sao_Paulo"
     deploy:
@@ -381,6 +397,7 @@ networks:
           : "Ativação: abra o domínio e pareie pelo WhatsApp (ou digite o CPF, fluxo legado) no primeiro acesso.",
         "Primeiro acesso: use o link de criação do administrador exibido acima, uma única vez. Se esta licença já tinha um administrador, o link abre o login normal.",
         "Guarde a ENCHAT_MASTER_KEY exibida — sem ela, os segredos gravados no banco são irrecuperáveis.",
+        "Guarde a PINFY_SESSION_KEY exibida também — sem ela, toda instância do WhatsApp pede QR code de novo (leads e conversas não se perdem).",
         "O painel do Pinfy não é exposto por domínio — diagnóstico só via docker exec no container enchat_pinfy.",
       ];
     },

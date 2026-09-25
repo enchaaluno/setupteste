@@ -13,6 +13,8 @@ const secrets = {
   pinfy_master_key: "pinfy-master-fake",
   pinfy_webhook_token: "pinfy-webhook-fake",
   pinfy_panel_password: "pinfy-panel-fake",
+  pinfy_db_password: "pinfy-db-pw-fake",
+  pinfy_session_key: "pinfy-session-key-fake",
   updater_token: "updater-token-fake",
   enchat_setup_token: "setup-token-fake-0123456789abcdef",
 };
@@ -86,6 +88,64 @@ describe("enchat — estado persistente do sidecar enchat_updater", () => {
   it("o diretório do bind mount está em hostDirs (o Swarm não cria bind mount sozinho)", () => {
     const caminhos = (enchat.hostDirs ?? []).map((d) => (typeof d === "string" ? d : d.path));
     expect(caminhos).toContain("/var/enchat/updater");
+  });
+});
+
+describe("enchat — S12: papel restrito \"pinfy\" no Postgres + sessão cifrada", () => {
+  it("generateSecrets gera pinfy_db_password e pinfy_session_key", () => {
+    const gerados = enchat.generateSecrets!(valuesValidos);
+    const dbPassword = gerados.find((g) => g.name === "pinfy_db_password");
+    const sessionKey = gerados.find((g) => g.name === "pinfy_session_key");
+    expect(dbPassword).toBeDefined();
+    expect(sessionKey).toBeDefined();
+    // [A-Za-z0-9_-] só (contrato do app, internal/appcore), 32-128 chars —
+    // hex de 24 bytes = 48 chars, dentro da janela.
+    expect(dbPassword!.value).toMatch(/^[A-Za-z0-9_-]{32,128}$/);
+    // 32 bytes aleatórios em hex = 64 chars (contrato da cifra AES-256-GCM).
+    expect(sessionKey!.value).toMatch(/^[0-9a-f]{64}$/);
+    expect(dbPassword!.value).not.toBe(sessionKey!.value);
+  });
+
+  it("dois sorteios dão valores diferentes para as duas (não é constante)", () => {
+    const a = enchat.generateSecrets!(valuesValidos);
+    const b = enchat.generateSecrets!(valuesValidos);
+    expect(a.find((g) => g.name === "pinfy_db_password")!.value).not.toBe(
+      b.find((g) => g.name === "pinfy_db_password")!.value
+    );
+    expect(a.find((g) => g.name === "pinfy_session_key")!.value).not.toBe(
+      b.find((g) => g.name === "pinfy_session_key")!.value
+    );
+  });
+
+  it("pinfy_session_key é `reveal` (perda é irrecuperável, como enchat_master_key); pinfy_db_password não é (segredo interno entre containers)", () => {
+    const gerados = enchat.generateSecrets!(valuesValidos);
+    expect(gerados.find((g) => g.name === "pinfy_session_key")!.reveal).toBe(true);
+    expect(gerados.find((g) => g.name === "pinfy_db_password")!.reveal).toBeFalsy();
+  });
+
+  it("o enchat_app recebe PINFY_DB_PASSWORD", () => {
+    const bloco = blocoDoServico(enchat.generateYaml(valuesValidos, secrets, ctxBase), "enchat_app");
+    expect(bloco).toContain(`PINFY_DB_PASSWORD: "${secrets.pinfy_db_password}"`);
+    expect(bloco).not.toContain(secrets.pinfy_session_key);
+  });
+
+  it("o enchat_pinfy conecta no Postgres como o usuário restrito \"pinfy\" (nunca mais \"enchat\") com a PINFY_DB_PASSWORD", () => {
+    const bloco = blocoDoServico(enchat.generateYaml(valuesValidos, secrets, ctxBase), "enchat_pinfy");
+    expect(bloco).toContain(`DATABASE_URL: "postgresql://pinfy:${secrets.pinfy_db_password}@enchat_postgres:5432/enchat?schema=pinfy&sslmode=disable"`);
+    expect(bloco).not.toMatch(/postgresql:\/\/enchat:/);
+  });
+
+  it("o enchat_pinfy recebe SESSION_KEY (cifra a sessão do WhatsApp) e SÓ ele", () => {
+    const yaml = enchat.generateYaml(valuesValidos, secrets, ctxBase);
+    expect(blocoDoServico(yaml, "enchat_pinfy")).toContain(`SESSION_KEY: "${secrets.pinfy_session_key}"`);
+    for (const s of ["enchat_app", "enchat_updater", "enchat_postgres"]) {
+      expect(blocoDoServico(yaml, s)).not.toContain(secrets.pinfy_session_key);
+    }
+  });
+
+  it("as notas avisam para guardar a PINFY_SESSION_KEY", () => {
+    const notas = enchat.postInstall!.notes as (v: Record<string, unknown>) => string[];
+    expect(notas(valuesValidos).some((n) => n.includes("PINFY_SESSION_KEY"))).toBe(true);
   });
 });
 
