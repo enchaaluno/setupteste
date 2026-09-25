@@ -43,6 +43,9 @@ jobs:
       - name: dados_enchat gravado com modo 600 (bloco real de secondary.sh)
         run: bash tests/test-dados-enchat-permissao.sh
 
+      - name: enchat.yaml do caminho legado passa papel pinfy e SESSION_KEY certos (S12)
+        run: bash tests/test-enchat-yaml-pinfy.sh
+
       - name: testes funcionais de i18n (t(), persistência de idioma)
         run: |
           bash i18n/test-t-function.sh
