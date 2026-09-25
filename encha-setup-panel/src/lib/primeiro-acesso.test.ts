@@ -79,7 +79,7 @@ describe("lerLinkPrimeiroAcesso", () => {
 
 describe("appPrecisaSetup", () => {
   const resposta = (corpo: unknown, status = 200) =>
-    vi.fn(async () => new Response(JSON.stringify(corpo), { status, headers: { "content-type": "application/json" } }));
+    vi.fn(async (_url: string) => new Response(JSON.stringify(corpo), { status, headers: { "content-type": "application/json" } }));
 
   it("true/false vêm de precisa_setup, consultando o endereço público do app", async () => {
     const { appPrecisaSetup } = await import("./primeiro-acesso");
