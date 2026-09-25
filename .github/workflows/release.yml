@@ -122,17 +122,14 @@ jobs:
           echo "OK: tarball da tag v$VERSION confirma ENCHA_VERSION=$installed"
 
       - name: Push no espelho (best-effort)
+        # continue-on-error: o espelho é opcional e não pode derrubar uma
+        # release já publicada. O script, porém, sai com 1 e escreve no resumo
+        # da run quando falha — o 403 de um token vencido ficou escondido aqui
+        # e o espelho parou em v0.2.5 sem ninguém ver.
         continue-on-error: true
         env:
           MIRROR_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
-        run: |
-          if [ -z "${MIRROR_TOKEN:-}" ]; then
-            echo "::warning::MIRROR_PUSH_TOKEN não configurado — pulando push no espelho."
-            exit 0
-          fi
-          git remote add mirror "https://x-access-token:${MIRROR_TOKEN}@github.com/carlosmaximiliano-cloud/instalador-encha.git"
-          git push mirror HEAD:main --force-with-lease
-          git push mirror "v$VERSION"
+        run: bash .github/scripts/push-mirror.sh "$VERSION"
 
       - name: Capturar digest da imagem
         if: success()
