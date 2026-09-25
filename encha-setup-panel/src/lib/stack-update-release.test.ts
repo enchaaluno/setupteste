@@ -156,7 +156,11 @@ describe("applyReleaseUpdate", () => {
     expect(logAuditMock).toHaveBeenCalledTimes(1);
     expect(logAuditMock.mock.calls[0][0].action).toBe("stack.update");
     expect(logAuditMock.mock.calls[0][0].result).toBe("ok");
-  });
+    // 20s: é o PRIMEIRO teste do arquivo e paga o import a frio do grafo de
+    // módulos (portainer, registry-pull...). Com a suíte inteira rodando em
+    // paralelo o default de 5s estourava (5019-5031ms) sem nenhum defeito
+    // de lógica — isolado ele leva ~1s.
+  }, 20_000);
 
   // M1 — A MAIS IMPORTANTE: pré-pull autenticado tem que acontecer ANTES de
   // qualquer updateServiceImage. Sem isso, o Swarm tentaria puxar a imagem
