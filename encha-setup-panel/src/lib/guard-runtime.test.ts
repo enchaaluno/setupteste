@@ -154,8 +154,55 @@ describe("garantirGuardaSwarm", () => {
 
     expect(createServiceMock).not.toHaveBeenCalled();
     expect(updateServiceMock).not.toHaveBeenCalled();
-    expect(getServiceExactMock).not.toHaveBeenCalled(); // nem chega a buscar o serviço
+    expect(getServiceExactMock).toHaveBeenCalledWith("tok", 1, GUARD); // buscou, e está ausente
     expect(avisoMock).toHaveBeenCalledWith(expect.stringContaining("2 nós"));
+  });
+
+  // Auditoria C6 — plano A1: o número de nós só barra a CRIAÇÃO. Guarda já
+  // existente num cluster que cresceu é reconciliado, com os peers de
+  // TODOS os nós (antes: return cedo, PEERS vazio para sempre).
+  it("EXISTENTE + 2 nós (criado com 1 nó, PEERS vazio) -> updateService com os peers dos 2 nós", async () => {
+    const { createServiceMock, updateServiceMock } = await setupMocks({
+      guardAtual: fakeGuardServiceIdentico({ env: ["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_PERMITIR=203.0.113.9"] }),
+      nodes: [no("n1", "10.0.0.6"), no("n2", "10.0.0.5")],
+    });
+    const { garantirGuardaSwarm } = await import("./guard-runtime");
+
+    await garantirGuardaSwarm("tok", 1);
+
+    expect(createServiceMock).not.toHaveBeenCalled();
+    expect(updateServiceMock).toHaveBeenCalledTimes(1);
+    const spec = updateServiceMock.mock.calls[0][4] as ServiceSpec;
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PEERS=10.0.0.5,10.0.0.6");
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PERMITIR=203.0.113.9");
+  });
+
+  it("EXISTENTE + 2 nós já com os peers certos -> nada chamado", async () => {
+    const { createServiceMock, updateServiceMock } = await setupMocks({
+      guardAtual: fakeGuardServiceIdentico({ env: ["ENCHA_GUARD_PEERS=10.0.0.5,10.0.0.6"] }),
+      nodes: [no("n1", "10.0.0.5"), no("n2", "10.0.0.6")],
+    });
+    const { garantirGuardaSwarm } = await import("./guard-runtime");
+
+    await garantirGuardaSwarm("tok", 1);
+
+    expect(createServiceMock).not.toHaveBeenCalled();
+    expect(updateServiceMock).not.toHaveBeenCalled();
+  });
+
+  it("EXISTENTE + 2 nós com gerenciado=false ou role de outro -> continua sem tocar", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const labels of [{ "com.encha.guard.gerenciado": "false" }, { "com.encha.role": "outra-coisa" }] as Record<string, string>[]) {
+      vi.resetModules();
+      const { createServiceMock, updateServiceMock } = await setupMocks({
+        guardAtual: fakeGuardServiceIdentico({ image: "velha@sha256:x", labels }),
+        nodes: [no("n1", "10.0.0.5"), no("n2", "10.0.0.6")],
+      });
+      const { garantirGuardaSwarm } = await import("./guard-runtime");
+      await garantirGuardaSwarm("tok", 1);
+      expect(createServiceMock).not.toHaveBeenCalled();
+      expect(updateServiceMock).not.toHaveBeenCalled();
+    }
   });
 
   it("existente com spec idêntico ao desejado -> nada chamado", async () => {

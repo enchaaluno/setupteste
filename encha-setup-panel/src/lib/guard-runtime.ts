@@ -59,7 +59,8 @@ const LABEL_GERENCIADO = "com.encha.guard.gerenciado";
 
 /**
  * Garante o serviço Swarm `encha-guard`: cria se ausente (só com exatamente
- * 1 nó), atualiza se o spec desejado difere do implantado, ou não faz nada
+ * 1 nó), atualiza se o spec desejado difere do implantado (com qualquer
+ * número de nós, peers recalculados), ou não faz nada
  * — idempotente, e NUNCA lança para quem chama. Ver o algoritmo completo em
  * `garantirGuardaSwarmOuLanca` (mesma função, sem o try/catch de topo —
  * separada só para os testes poderem exercitar cada ramo sem um catch
@@ -75,14 +76,22 @@ export async function garantirGuardaSwarm(token: string, endpointId: number): Pr
 
 export async function garantirGuardaSwarmOuLanca(token: string, endpointId: number): Promise<void> {
   const nodes = await listNodes(token, endpointId);
-  if (nodes.length !== 1) {
+  const atual = await getServiceExact(token, endpointId, GUARD_SERVICE_NAME);
+
+  // Plano (A1): "ausente e EXATAMENTE 1 nó → cria; >1 nó → não cria e loga;
+  // existente → atualiza só se o spec desejado difere". O número de nós só
+  // barra a CRIAÇÃO. Um guarda que JÁ existe continua sendo reconciliado
+  // com qualquer número de nós (auditoria C6) — senão, num cluster que
+  // cresceu depois da criação, ele ficaria para sempre com
+  // ENCHA_GUARD_PEERS vazio (descartando o tráfego 2377/7946/4789 entre os
+  // nós, inclusive na tarefa global que sobe no nó novo) e nunca receberia
+  // imagem nova. peersFromNodes existe justamente para esse caso.
+  if (!atual && nodes.length !== 1) {
     console.warn(
-      `[guard] encha-guard não gerenciado: o cluster tem ${nodes.length} nós, e este mecanismo só cria/atualiza o serviço com exatamente 1 nó — ver plano de segurança (A1) / documentação.`
+      `[guard] encha-guard ausente e NÃO criado: o cluster tem ${nodes.length} nós, e a criação automática só acontece com exatamente 1 nó — ver plano de segurança (A1) / documentação.`
     );
     return;
   }
-
-  const atual = await getServiceExact(token, endpointId, GUARD_SERVICE_NAME);
 
   if (atual) {
     const role = atual.Spec.Labels?.[ROLE_LABEL];
