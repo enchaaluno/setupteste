@@ -55,5 +55,28 @@ describe("<SshProtectionWarning>", () => {
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
     await user.click(screen.getByRole("button", { name: new RegExp(sshProtectionWarningText.pt.copy) }));
     expect(writeText).toHaveBeenCalledWith(COMANDO_PROTEGER_SSH);
+    expect(await screen.findByText(sshProtectionWarningText.pt.copied)).toBeInTheDocument();
+  });
+
+  // Auditoria C8: o botão não pode dizer "Copiado!" quando a cópia falhou
+  // (permissão negada) nem estourar quando navigator.clipboard não existe
+  // (painel por http://IP, fora de contexto seguro).
+  it("writeText rejeitado: não mostra 'Copiado!'", async () => {
+    const user = userEvent.setup();
+    render(<SshProtectionWarning protecaoInstalada={false} />);
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("NotAllowedError"));
+    await user.click(screen.getByRole("button", { name: new RegExp(sshProtectionWarningText.pt.copy) }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(sshProtectionWarningText.pt.copied)).not.toBeInTheDocument();
+    expect(screen.getByText(COMANDO_PROTEGER_SSH)).toBeInTheDocument();
+  });
+
+  it("sem navigator.clipboard (contexto inseguro): clicar não quebra nem mostra 'Copiado!'", async () => {
+    const user = userEvent.setup();
+    render(<SshProtectionWarning protecaoInstalada={false} />);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    await user.click(screen.getByRole("button", { name: new RegExp(sshProtectionWarningText.pt.copy) }));
+    expect(screen.queryByText(sshProtectionWarningText.pt.copied)).not.toBeInTheDocument();
+    expect(screen.getByText(COMANDO_PROTEGER_SSH)).toBeInTheDocument();
   });
 });

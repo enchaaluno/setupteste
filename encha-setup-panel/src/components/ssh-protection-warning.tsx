@@ -23,10 +23,20 @@ export function SshProtectionWarning({ protecaoInstalada }: { protecaoInstalada:
 
   if (!deveExibirAvisoProtecaoSsh(protecaoInstalada)) return null;
 
+  // "Copiado!" só depois que a cópia deu certo: fora de contexto seguro
+  // (painel aberto por http://IP) navigator.clipboard não existe, e o
+  // writeText pode rejeitar (permissão negada). Nesses casos o comando
+  // continua visível para copiar à mão — o botão só não mente.
   function copiar() {
-    navigator.clipboard.writeText(COMANDO_PROTEGER_SSH);
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 1500);
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip) return;
+    clip.writeText(COMANDO_PROTEGER_SSH).then(
+      () => {
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 1500);
+      },
+      () => {},
+    );
   }
 
   return (
