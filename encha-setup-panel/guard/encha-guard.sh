@@ -37,6 +37,23 @@
 # ENCHA_GUARD_DESATIVADO=1 (ou "true"): desliga o guarda — a tabela existente
 # é removida e nada mais é aplicado enquanto a flag estiver ativa.
 #
+# ENCHA_GUARD_SSH_PORTAS (ciclo C7, achado A2 — mitigação automática para as
+# VPS existentes que não vão rodar o fail2ban de verdade do C10): lista de
+# portas SSH, mesmo separador espaço/vírgula das duas variáveis acima, opcional
+# (default "22"). Cada porta é validada como inteiro decimal canônico 1-65535
+# — a mesma disciplina defensiva das outras entradas de operador (formato +
+# faixa numérica, nunca só a forma); a que não bater é DESCARTADA e logada,
+# nunca interpolada crua no "nft -f -". Gera uma regra de LIMITE DE TAXA (não
+# um drop incondicional, que derrubaria o SSH de verdade):
+#   tcp dport { <portas> } ct state new limit rate over 20/minute burst 30 packets drop
+# "ct state new" é CRÍTICO e nunca pode ser removido: sem ele, o limite se
+# aplicaria a todo pacote de QUALQUER sessão SSH, inclusive as já
+# autenticadas e abertas — derrubando uso normal, não só tentativas de força
+# bruta. Com "ct state new", só a TAXA DE NOVAS TENTATIVAS DE CONEXÃO é
+# limitada; sessões já estabelecidas nunca são afetadas. Lista vazia (todas
+# inválidas, ou ENCHA_GUARD_SSH_PORTAS="" explícito) => a regra é omitida do
+# ruleset, como pares4/pares6 já fazem quando não têm elemento nenhum.
+#
 # IMPORTANTE — nunca apagar a tabela ao encerrar: as regras vivem no kernel
 # do HOST (rede `host`, contêiner sem net namespace próprio), não no
 # contêiner. Um restart/replace do contêiner (deploy, update, OOM, reboot)
@@ -102,6 +119,21 @@ prefixo_valido() {
     *) return 1 ;;
   esac
   decimal_canonico_ate "$1" "$2"
+}
+
+# Porta TCP (ENCHA_GUARD_SSH_PORTAS): decimal canônico 1-65535 — mesmo teto de
+# comprimento (1 a 5 dígitos) antes do "test" numérico, pelo mesmo motivo dos
+# octetos/prefixos acima (nunca deixar uma string de dígitos absurdamente
+# longa chegar ao "-le"). decimal_canonico_ate aceita "0" como válido (é
+# correto para octeto IPv4); porta 0 não é uma porta TCP válida, então é
+# rejeitada aqui antes de delegar.
+porta_valida() {
+  case "$1" in
+    ????? | ???? | ??? | ?? | ?) : ;;
+    *) return 1 ;;
+  esac
+  [ "$1" = "0" ] && return 1
+  decimal_canonico_ate "$1" 65535
 }
 
 # --- validação por família -----------------------------------------------
@@ -240,6 +272,33 @@ coletar_enderecos() {
   IPV6_VALIDOS="${IPV6_VALIDOS# }"
 }
 
+# Normaliza o separador de ENCHA_GUARD_SSH_PORTAS (vírgula -> espaço), com
+# default "22" só quando a variável está DESATIVADA (unset) — "${VAR-padrao}"
+# de propósito (não "${VAR:-padrao}"): ENCHA_GUARD_SSH_PORTAS="" explícito
+# precisa continuar vazio (a regra some do ruleset), nunca cair no default.
+listar_portas_ssh_candidatas() {
+  bruto="${ENCHA_GUARD_SSH_PORTAS-22}"
+  printf '%s' "$bruto" | tr ',' ' '
+}
+
+# Preenche PORTAS_SSH_VALIDAS (global, espaço-separada) só com o que passou em
+# porta_valida — mesmo padrão de coletar_enderecos: o que não bate é
+# DESCARTADO e logado, nunca chega ao "nft -f -".
+PORTAS_SSH_VALIDAS=""
+
+coletar_portas_ssh() {
+  PORTAS_SSH_VALIDAS=""
+  for candidato in $(listar_portas_ssh_candidatas); do
+    [ -n "$candidato" ] || continue
+    if porta_valida "$candidato"; then
+      PORTAS_SSH_VALIDAS="$PORTAS_SSH_VALIDAS $candidato"
+    else
+      log "porta SSH descartada (fora do formato válido, inteiro decimal 1-65535): $candidato"
+    fi
+  done
+  PORTAS_SSH_VALIDAS="${PORTAS_SSH_VALIDAS# }"
+}
+
 # --- geração do ruleset -----------------------------------------------------
 
 # Imprime no stdout o `nft -f -` completo. Só inclui um bloco "set" (e a
@@ -280,6 +339,16 @@ montar_ruleset() {
   fi
   if [ -n "$IPV6_VALIDOS" ]; then
     echo '    ip6 saddr @pares6 accept'
+  fi
+  # C7 (achado A2): limite de taxa de NOVAS conexões SSH por IP de origem —
+  # nunca um drop incondicional. "ct state new" restringe o limite à taxa de
+  # tentativas de conexão; sem ele, toda sessão SSH já aberta (inclusive uso
+  # interativo normal) cairia sob o mesmo limite. Omitida quando não há
+  # nenhuma porta válida (ver coletar_portas_ssh).
+  coletar_portas_ssh
+  if [ -n "$PORTAS_SSH_VALIDAS" ]; then
+    portas_ssh_fmt="$(printf '%s' "$PORTAS_SSH_VALIDAS" | tr ' ' ',')"
+    echo "    tcp dport { $portas_ssh_fmt } ct state new limit rate over 20/minute burst 30 packets drop"
   fi
   echo '    tcp dport { 2377, 7946 } counter drop'
   echo '    udp dport { 4789, 7946 } counter drop'
