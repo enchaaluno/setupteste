@@ -34,7 +34,7 @@ export NEEDRESTART_MODE=a
 # Versão e URL dos Termos de Uso (texto integral em legal/TERMOS-DE-USO.md).
 # Ao publicar uma revisão material do texto, atualize TERMS_VERSION em conjunto
 # com a versão publicada em /admin/setup/terms no Monitor — os dois precisam bater.
-TERMS_VERSION="2"
+TERMS_VERSION="3"
 TERMS_URL="https://encha.ai/termos"
 
 # Redireciona stdin para o terminal — necessário quando o script é executado
@@ -374,6 +374,14 @@ MSG_PT[aviso_legal_acao_ssl]="${amarelo} • Emitir certificado SSL (Let's Encry
 MSG_EN[aviso_legal_acao_ssl]="${amarelo} • Issue an SSL certificate (Let's Encrypt), sending your email to it${reset}"
 MSG_ES[aviso_legal_acao_ssl]="${amarelo} • Emitir certificado SSL (Let's Encrypt), enviando su correo a ella${reset}"
 
+MSG_PT[aviso_legal_acao_guarda]="${amarelo} • Bloquear, automaticamente, as portas internas do cluster e limitar tentativas${reset}"
+MSG_EN[aviso_legal_acao_guarda]="${amarelo} • Automatically block the cluster's internal ports and limit connection${reset}"
+MSG_ES[aviso_legal_acao_guarda]="${amarelo} • Bloquear, automáticamente, los puertos internos del cluster y limitar los${reset}"
+
+MSG_PT[aviso_legal_acao_guarda2]="${amarelo}   de conexão SSH — não é um firewall completo (Cláusula 6.1 dos Termos)${reset}"
+MSG_EN[aviso_legal_acao_guarda2]="${amarelo}   attempts via SSH — this is not a full firewall (Terms, Clause 6.1)${reset}"
+MSG_ES[aviso_legal_acao_guarda2]="${amarelo}   intentos de conexión SSH — no es un firewall completo (Cláusula 6.1)${reset}"
+
 MSG_PT[aviso_legal_garantia]="${amarelo}Fornecido \"no estado em que se encontra\", sem garantia. Use uma VPS nova${reset}"
 MSG_EN[aviso_legal_garantia]="${amarelo}Provided \"as is\", with no warranty. Use a fresh VPS${reset}"
 MSG_ES[aviso_legal_garantia]="${amarelo}Proporcionado \"tal cual\", sin garantía. Use una VPS nueva${reset}"
@@ -471,6 +479,8 @@ centralizar "╚═╝  ╚═╝  ╚═══╝  ╚═╝╚═════�
     echo -e "$(t aviso_legal_acao_docker2)"
     echo -e "$(t aviso_legal_acao_docker3)"
     echo -e "$(t aviso_legal_acao_ssl)"
+    echo -e "$(t aviso_legal_acao_guarda)"
+    echo -e "$(t aviso_legal_acao_guarda2)"
     echo ""
     echo -e "$(t aviso_legal_garantia)"
     echo -e "$(t aviso_legal_backup "$TERMS_URL" "$TERMS_VERSION")"

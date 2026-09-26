@@ -178,7 +178,7 @@
 
 <header class="doc-header">
   <h1>Termos de Uso — Encha Setup e Encha Setup Panel</h1>
-  <span class="version-badge">Versão 2 · vigente desde 31 de julho de 2026</span>
+  <span class="version-badge">Versão 3 · vigente desde 26 de setembro de 2026</span>
 </header>
 
 <div class="lead-warning">
@@ -313,7 +313,7 @@
 <section class="clause" id="c6">
   <h2>6. Do que os produtos NÃO fazem</h2>
   <p><strong>Esta cláusula delimita negativamente o objeto e afasta expectativa legítima quanto a funcionalidades inexistentes. O Usuário declara ter lido e compreendido integralmente seu conteúdo.</strong></p>
-  <p>6.1. <strong>O Encha Setup NÃO configura firewall.</strong> Nenhuma regra de filtragem de pacotes, nenhum bloqueio de portas e nenhum mecanismo de prevenção a tentativas de intrusão são instalados ou configurados. <strong>O servidor permanece, após a instalação, com a política de rede que possuía antes dela.</strong></p>
+  <p>6.1. O Encha Setup passa a configurar, automaticamente e sem intervenção do Usuário — inclusive em instalações já existentes, tão logo o Painel seja atualizado —, uma proteção de rede de <strong>escopo limitado</strong>: um mecanismo que bloqueia, a partir da internet pública, o acesso às portas internas do orquestrador em modo cluster (Anexo II.1) usadas para a gestão do cluster e para o tráfego entre os nós, e que limita a taxa de novas tentativas de conexão à porta de acesso remoto (SSH) do servidor. Complementarmente, em <strong>instalações novas</strong>, o Instalador ativa automaticamente a ferramenta fail2ban, que bloqueia temporariamente origens após tentativas repetidas e malsucedidas de acesso remoto (SSH); em <strong>instalações já existentes</strong>, essa ativação depende de comando manual do Usuário, oferecido pelo próprio Painel. <strong>Nenhuma dessas proteções constitui firewall de uso geral, nem substitui a obrigação do Usuário descrita na Cláusula 8.2.</strong> Elas não bloqueiam nem restringem, e nenhum mecanismo adicional de filtragem de pacotes é instalado para, as portas adicionais vinculadas diretamente ao servidor pelas Stacks do catálogo (Anexo II.3), nem qualquer outra porta, serviço ou protocolo do servidor. <strong>Fora do que este item descreve expressamente, o servidor permanece, após a instalação, com a política de rede que possuía antes dela.</strong></p>
   <p>6.2. O Encha Setup <strong>não cria nem dimensiona área de troca de memória (swap)</strong>, não cria tarefas agendadas e não instala agentes de monitoramento de disponibilidade.</p>
   <p>6.3. <strong>Os Produtos NÃO realizam backup, cópia de segurança, espelhamento ou qualquer forma de preservação dos dados do Usuário, nem antes, nem durante, nem depois da instalação.</strong> Não existe funcionalidade de restauração.</p>
   <p>6.4. O Painel <strong>não</strong> oferece: terminal ou console de acesso remoto ao servidor; funcionalidade de backup ou restauração; monitoramento de consumo de processador, memória ou disco; edição, interrupção, reinício ou remoção de Stacks instaladas. A gestão do ciclo de vida das Stacks é feita pela ferramenta de gerenciamento de contêineres ou por linha de comando, fora do escopo do Painel.</p>
@@ -343,8 +343,8 @@
   <p>8.1.1. <strong>Realizar, antes de qualquer execução dos Produtos, backup íntegro e testado do servidor e de todos os dados nele contidos</strong>, e mantê-lo de forma recorrente durante todo o período de uso.</p>
   <p>8.1.2. O Usuário reconhece que a execução dos Produtos é potencialmente destrutiva e irreversível, e que <strong>a perda de dados decorrente da ausência de backup é de sua exclusiva responsabilidade.</strong></p>
   <h3>8.2. Segurança de rede</h3>
-  <p>8.2.1. <strong>Configurar, por seus próprios meios, o firewall e as demais medidas de proteção de rede do servidor</strong>, cientes de que os Produtos não o fazem, conforme a Cláusula 6.1.</p>
-  <p>8.2.2. O Usuário reconhece que <strong>determinadas Stacks, quando por ele selecionadas, vinculam portas adicionais diretamente ao servidor</strong> — entre elas as portas comumente associadas a serviços de banco de dados e de acesso remoto, relacionadas no Anexo II. <strong>Na ausência de firewall, tais serviços tornam-se acessíveis a partir da internet pública, com risco concreto de acesso não autorizado e de vazamento de dados.</strong> Cabe exclusivamente ao Usuário restringir esse acesso.</p>
+  <p>8.2.1. <strong>Configurar, por seus próprios meios, o firewall e as demais medidas de proteção de rede do servidor não abrangidas pela proteção automática e de escopo limitado descrita na Cláusula 6.1</strong>, cientes de que essa proteção não é um firewall de uso geral.</p>
+  <p>8.2.2. O Usuário reconhece que <strong>determinadas Stacks, quando por ele selecionadas, vinculam portas adicionais diretamente ao servidor</strong> — entre elas as portas comumente associadas a serviços de banco de dados e de acesso remoto, relacionadas no Anexo II. <strong>A proteção automática da Cláusula 6.1 não alcança essas portas.</strong> Na ausência de firewall de uso geral configurado pelo próprio Usuário, tais serviços tornam-se acessíveis a partir da internet pública, com risco concreto de acesso não autorizado e de vazamento de dados. Cabe exclusivamente ao Usuário restringir esse acesso.</p>
   <h3>8.3. Credenciais e segredos</h3>
   <p>8.3.1. <strong>O Usuário está ciente de que o Instalador registra as senhas e chaves de aplicação geradas para as Stacks em arquivos de texto não cifrados, no diretório administrativo do servidor.</strong> Essa gravação existe para que o próprio Usuário possa recuperar as credenciais das aplicações que instalou.</p>
   <p>8.3.2. Cabe exclusivamente ao Usuário: restringir as permissões de leitura desses arquivos; removê-los do servidor após anotar as credenciais em local seguro; alterar as senhas geradas automaticamente; e adotar rotina periódica de rotação de credenciais.</p>
@@ -529,7 +529,7 @@
 
 <section class="clause" id="c25">
   <h2>25. Vigência</h2>
-  <p>25.1. Estes Termos correspondem à <strong>versão 2</strong> e vigoram a partir de <strong>31 de julho de 2026</strong>, por prazo indeterminado, enquanto perdurar o uso dos Produtos pelo Usuário.</p>
+  <p>25.1. Estes Termos correspondem à <strong>versão 3</strong> e vigoram a partir de <strong>26 de setembro de 2026</strong>, por prazo indeterminado, enquanto perdurar o uso dos Produtos pelo Usuário.</p>
   <p>25.2. Esta versão corresponde integralmente ao texto publicado nos canais oficiais da Encha e ao texto exibido no Painel para fins de aceite.</p>
 </section>
 
@@ -602,7 +602,7 @@
     <li>Portas 2022 e 8005 — serviço de transmissão de mídia AzuraCast.</li>
     <li>Portas de serviço de banco de dados vetorial, quando configuradas pelo Usuário.</li>
   </ul>
-  <p><strong>Como os Produtos não configuram firewall, tais serviços tornam-se acessíveis a partir da internet pública imediatamente após a instalação. A proteção desse acesso é obrigação exclusiva do Usuário</strong>, nos termos da Cláusula 8.2.</p>
+  <p>As portas internas do orquestrador em modo cluster (2377, 7946 e 4789) recebem a proteção automática e de escopo limitado descrita na Cláusula 6.1. <strong>As portas relacionadas nesta cláusula, vinculadas pelas Stacks do catálogo, não são alcançadas por ela: como os Produtos não configuram firewall de uso geral, tais serviços tornam-se acessíveis a partir da internet pública imediatamente após a instalação. A proteção desse acesso é obrigação exclusiva do Usuário</strong>, nos termos da Cláusula 8.2.</p>
 
   <h3>II.4. Credenciais gravadas em texto não cifrado</h3>
   <p>As senhas e chaves de aplicação geradas durante a instalação são gravadas em arquivos de texto não cifrados no diretório administrativo do servidor, para consulta do próprio Usuário. <strong>Aplica-se integralmente o disposto na Cláusula 8.3.</strong></p>
@@ -612,6 +612,7 @@
   <h2>Anexo III — Histórico de versões</h2>
   <p><strong>Versão 1</strong> — vigente desde 28 de julho de 2026. Primeira versão integral destes Termos de Uso, substituindo o texto provisório anteriormente publicado sob a mesma identificação de versão.</p>
   <p><strong>Versão 2</strong> — vigente desde 31 de julho de 2026. Atualiza a Cláusula 5.2: o Painel passa a ter conta administrativa própria (usuário e senha definidos pelo Usuário na instalação, gravados em texto não cifrado na variável de ambiente da stack), além de guardar credencial de serviço da interface de gerenciamento de contêineres para atuar em nome do Usuário.</p>
+  <p><strong>Versão 3</strong> — vigente desde 26 de setembro de 2026. Atualiza a Cláusula 6.1 e os itens correlatos (8.2.1, 8.2.2 e Anexo II.3): o Encha Setup passa a configurar automaticamente uma proteção de rede de escopo limitado — bloqueio das portas internas do orquestrador em modo cluster e limite de taxa de novas conexões SSH, sempre; e ativação do fail2ban contra tentativas repetidas de acesso remoto, automática em instalações novas e por comando manual nas já existentes. Essa proteção não constitui firewall de uso geral nem alcança as portas adicionais vinculadas pelas Stacks do catálogo.</p>
 </section>
 
 <a class="back-to-top" href="#topo">↑ Voltar ao início</a>
