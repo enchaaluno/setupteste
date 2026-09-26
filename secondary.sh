@@ -1613,7 +1613,11 @@ finalizar_admin_portainer() {
 
         local salvo=""
         if [ -f /root/dados_vps/dados_portainer ]; then
-            salvo="$(grep -m1 '^Username: ' /root/dados_vps/dados_portainer 2>/dev/null | sed 's/^Username: //')"
+            # Chave nova (inglês) ou antiga (português) — mesmo idioma dos
+            # outros leitores (stack_editavel, deploy_stack_painel_via_portainer):
+            # as instalações com "Usuario:" (antes do i18n) são justamente as
+            # que podem ter o admin já renomeado.
+            salvo="$(grep -E '^(Username|Usuario): ' /root/dados_vps/dados_portainer 2>/dev/null | head -1 | awk -F': ' '{print $2}' | tr -d '\r')"
         fi
         if [ -n "$salvo" ] && [ "$salvo" != "Criar manualmente." ]; then
             local ja_tem_salvo=false c

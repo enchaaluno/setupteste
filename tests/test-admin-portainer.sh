@@ -344,6 +344,26 @@ fi
 rm -rf "$DV" "$FAKE_STATE_FILE" "$OUT"
 
 # ============================================================
+# Cenário 2c: reinstalação sobre dados_portainer no formato ANTIGO (chave
+# "Usuario:", gravada entre a renomeação de 2026-07-31 e o i18n de
+# 2026-09-14 — justamente a leva que já tem admin renomeado), com CRLF.
+# O nome salvo tem que valer como candidato, senão cai em "Criar manualmente."
+# ============================================================
+DV="$(mktemp -d)"
+printf '[ PORTAINER ]\r\nDominio: https://portainer.exemplo.com\r\nUsuario: carlosadm\r\nSenha: %s\r\nToken: x\r\n' "$SENHA" > "$DV/dados_portainer"
+FAKE_STATE_FILE="$(mktemp -u)"
+printf 'USER=carlosadm\nPASS=%s\n' "$SENHA" > "$FAKE_STATE_FILE"
+FAKE_RENAME_HTTP=200
+OUT="$(mktemp)"
+saida="$(rodar_cenario "$DV" "novoadm" "$SENHA" "true" "$OUT")"
+if [ "$saida" = "USER_PORTAINER_FINAL=carlosadm|CREDENCIAIS_APLICADAS=true" ]; then
+  ok "reinstalação (dados_portainer antigo, 'Usuario:' + CRLF): o nome salvo vale como candidato"
+else
+  falha "reinstalação (dados_portainer antigo): esperado sucesso com carlosadm, obtido '$saida' — log: $(cat "$FAKE_LOG")"
+fi
+rm -rf "$DV" "$FAKE_STATE_FILE" "$OUT"
+
+# ============================================================
 # Cenário 3a: reinstalação — SÓ "admin" funciona (nunca foi renomeado),
 # dados_portainer salvo tem o fallback "Criar manualmente." (ignorado como
 # candidato) — mantém "admin", sem renomear (reinstalação preserva o admin)
