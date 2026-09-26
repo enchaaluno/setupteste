@@ -26835,8 +26835,133 @@ MSG_PT[deploy_stack_painel_via_portainer_sucesso]="  \e[32m✓ Stack 'encha-pane
 MSG_EN[deploy_stack_painel_via_portainer_sucesso]="  \e[32m✓ Stack 'encha-panel' created/updated via Portainer API.\e[0m"
 MSG_ES[deploy_stack_painel_via_portainer_sucesso]="  \e[32m✓ Stack 'encha-panel' creada/actualizada vía API de Portainer.\e[0m"
 
+################################################################################
+# garantir_segredos_credenciais_painel — Ciclo C9 (M3 do plano de segurança:
+# segredos do Docker para PANEL_ADMIN_PASSWORD/PORTAINER_PASSWORD).
+#
+# Duas camadas por credencial-base ($1, "panel_admin_password" ou
+# "portainer_password"):
+#
+#   1) Secret "bootstrap" de nome FIXO ("<base>_bootstrap"), idempotente —
+#      mesmo padrão já usado por encha_panel_master_key (inspect || create).
+#      Existe só pra satisfazer a exigência do Swarm de que todo secret
+#      referenciado por um serviço EXISTA no momento do deploy: o
+#      docker-stack.yaml (tracked + heredoc) monta os dois secrets novos
+#      SEMPRE, mesmo quando a imagem que vai rodar não suporta lê-los — o
+#      mount é inofensivo (sem *_FILE apontado pra lá, o painel nunca abre o
+#      arquivo). Sem este bootstrap, instalar/atualizar com uma imagem sem o
+#      label quebraria o deploy inteiro por causa de um secret inexistente
+#      que ninguém ia ler mesmo.
+#
+#   2) Secret "versionado" ("<base>_<epoch>"), com o valor REAL ($2) — só
+#      tentado quando $3 (tem_label) = true E $2 não é vazio (sem valor não
+#      há o que gravar; o chamador já passa vazio quando a migração anterior
+#      já rodou e ninguém digitou senha nova nesta chamada — nesse caso
+#      reaproveita o nome já gravado em $4, sem recriar nada: "não duplica
+#      secret à toa"). Rotulado com.encha.segredo-base=<base>, pra
+#      limpar_segredos_antigos_painel encontrar as versões velhas depois.
+#
+# Setado nas globais (o chamador LÊ IMEDIATAMENTE depois de cada chamada,
+# antes de reusar a função para a outra credencial-base — não são por-base):
+#   SEGREDO_PAINEL_NOME         nome do secret a apontar no env_json. Nunca
+#                                vazio quando tem_label=true (cai no já
+#                                existente, ou fica vazio só se nunca houve
+#                                nem um nem outro — aí a compose cai no
+#                                default do bootstrap); vazio quando
+#                                tem_label=false (variável nem é usada).
+#   SEGREDO_PAINEL_CRIADO_AGORA  true só quando ESTA chamada criou um secret
+#                                versionado NOVO com sucesso — é o que
+#                                autoriza esvaziar a senha em texto e, depois
+#                                do deploy confirmado, limpar a versão
+#                                anterior.
+################################################################################
+MSG_PT[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ Não foi possível criar o secret de apoio %s (seguindo sem ele).\e[0m"
+MSG_EN[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ Could not create the placeholder secret %s (continuing without it).\e[0m"
+MSG_ES[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ No fue posible crear el secret de apoyo %s (continuando sin él).\e[0m"
+
+MSG_PT[garantir_segredos_credenciais_painel_criado]="  \e[32m✓ Secret %s criado — %s passa a vir de arquivo, não de texto.\e[0m"
+MSG_EN[garantir_segredos_credenciais_painel_criado]="  \e[32m✓ Secret %s created — %s now comes from a file, not plain text.\e[0m"
+MSG_ES[garantir_segredos_credenciais_painel_criado]="  \e[32m✓ Secret %s creado — %s ahora viene de un archivo, no de texto.\e[0m"
+
+MSG_PT[garantir_segredos_credenciais_painel_falhou]="  \e[33m↳ Falha ao criar o secret de %s nesta rodada — mantendo a senha em texto (nada quebrou).\e[0m"
+MSG_EN[garantir_segredos_credenciais_painel_falhou]="  \e[33m↳ Failed to create the %s secret this round — keeping the plain-text password (nothing broke).\e[0m"
+MSG_ES[garantir_segredos_credenciais_painel_falhou]="  \e[33m↳ Falló la creación del secret de %s en esta ronda — manteniendo la contraseña en texto (nada se rompió).\e[0m"
+
+# imagem_painel_tem_label_credenciais_arquivo — true (exit 0) se a imagem $1
+# (já pulada/buildada localmente antes de chegar aqui) tiver o label
+# com.encha.painel.recursos com a palavra "credenciais-arquivo" (C4). Usa
+# 'case' (contém), não igualdade — o label pode trazer outras palavras junto
+# (ex.: "credenciais-arquivo guarda-swarm").
+imagem_painel_tem_label_credenciais_arquivo() {
+    local imagem="$1"
+    local labels
+    labels=$(docker image inspect "$imagem" --format '{{index .Config.Labels "com.encha.painel.recursos"}}' 2>/dev/null)
+    case "$labels" in
+        *credenciais-arquivo*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+garantir_segredos_credenciais_painel() {
+    local base="$1" valor="$2" tem_label="$3" nome_atual="$4"
+    local bootstrap="${base}_bootstrap"
+
+    SEGREDO_PAINEL_NOME=""
+    SEGREDO_PAINEL_CRIADO_AGORA=false
+
+    if ! docker secret inspect "$bootstrap" >/dev/null 2>&1; then
+        if ! openssl rand 32 | docker secret create "$bootstrap" - >/dev/null 2>&1; then
+            echo -e "$(t garantir_segredos_credenciais_painel_bootstrap_falhou "$bootstrap")"
+        fi
+    fi
+
+    if [ "$tem_label" != true ]; then
+        return 0
+    fi
+
+    if [ -z "$valor" ]; then
+        # Nada novo pra gravar (já migrado e ninguém digitou senha nova
+        # agora, ou a credencial de serviço veio vazia) — reaproveita o nome
+        # já em uso, sem chamar o Docker (evita criar secret à toa).
+        SEGREDO_PAINEL_NOME="$nome_atual"
+        return 0
+    fi
+
+    local novo
+    novo="${base}_$(date +%s)"
+    if printf '%s' "$valor" | docker secret create "$novo" --label "com.encha.segredo-base=${base}" - >/dev/null 2>&1; then
+        SEGREDO_PAINEL_NOME="$novo"
+        SEGREDO_PAINEL_CRIADO_AGORA=true
+        echo -e "$(t garantir_segredos_credenciais_painel_criado "$novo" "$base")"
+    else
+        echo -e "$(t garantir_segredos_credenciais_painel_falhou "$base")"
+        SEGREDO_PAINEL_NOME="$nome_atual"
+    fi
+}
+
+# limpar_segredos_antigos_painel — remove versões anteriores do secret
+# "<base>_<epoch>" depois que uma versão NOVA ($2) foi aplicada com sucesso
+# (o chamador só invoca isto quando SEGREDO_PAINEL_CRIADO_AGORA=true e o
+# deploy da stack já confirmou 20x — nunca antes, senão uma stack que falhou
+# ficaria sem nenhuma versão válida). Nunca remove o bootstrap nem a versão
+# que acabou de ser aplicada. Um secret "em uso" por uma task antiga que
+# ainda não saiu recusa a remoção (Docker devolve erro) — ignorado de
+# propósito, best-effort: sobra pra próxima rodada de limpeza.
+limpar_segredos_antigos_painel() {
+    local base="$1" manter="$2"
+    local bootstrap="${base}_bootstrap"
+    local nome
+    while IFS= read -r nome; do
+        [ -z "$nome" ] && continue
+        [ "$nome" = "$manter" ] && continue
+        [ "$nome" = "$bootstrap" ] && continue
+        docker secret rm "$nome" >/dev/null 2>&1
+    done < <(docker secret ls --filter "label=com.encha.segredo-base=${base}" --format '{{.Name}}' 2>/dev/null)
+}
+
 deploy_stack_painel_via_portainer() {
     local stack_file="$1"
+    local tag_imagem="${2:-$ENCHA_VERSION}"
     local rede="${nome_rede_interna:-enchanet}"
 
     if ! command -v jq &> /dev/null; then
@@ -26921,29 +27046,75 @@ deploy_stack_painel_via_portainer() {
     local panel_user_val panel_pass_val
     panel_user_val="${user_painel:-$(get_env_val PANEL_ADMIN_USER)}"
     panel_pass_val="${pass_painel:-$(get_env_val PANEL_ADMIN_PASSWORD)}"
-    if [ -z "$panel_user_val" ] || [ -z "$panel_pass_val" ]; then
+    local panel_admin_password_secret_atual portainer_password_secret_atual
+    panel_admin_password_secret_atual="$(get_env_val PANEL_ADMIN_PASSWORD_SECRET_NAME)"
+    portainer_password_secret_atual="$(get_env_val PORTAINER_PASSWORD_SECRET_NAME)"
+    # Sem senha em texto E sem migração anterior registrada (nenhum secret
+    # gravado ainda): aí sim não há admin nenhum, nem em escopo, nem salvo,
+    # nem por trás de um secret já criado numa rodada anterior. Uma senha em
+    # texto vazia por SI SÓ não é "sem admin" — é exatamente o estado normal
+    # depois que a migração pro Docker secret já rodou com sucesso.
+    if [ -z "$panel_user_val" ] || { [ -z "$panel_pass_val" ] && [ -z "$panel_admin_password_secret_atual" ]; }; then
         echo -e "$(t deploy_stack_painel_via_portainer_sem_admin)"
         return 1
+    fi
+
+    # C9 (M3 do plano de segurança): segredos do Docker por trás de
+    # PANEL_ADMIN_PASSWORD/PORTAINER_PASSWORD, só quando a imagem que vai
+    # rodar entende _FILE (label com.encha.painel.recursos, C4) — ver
+    # garantir_segredos_credenciais_painel logo acima.
+    local tem_label_credenciais=false
+    if imagem_painel_tem_label_credenciais_arquivo "ghcr.io/enchaaluno/setup-panel:${tag_imagem}"; then
+        tem_label_credenciais=true
+    fi
+
+    garantir_segredos_credenciais_painel "panel_admin_password" "$panel_pass_val" "$tem_label_credenciais" "$panel_admin_password_secret_atual"
+    local panel_admin_password_secret_novo="$SEGREDO_PAINEL_NOME"
+    local panel_admin_password_criado_agora="$SEGREDO_PAINEL_CRIADO_AGORA"
+
+    garantir_segredos_credenciais_painel "portainer_password" "$pass_portainer" "$tem_label_credenciais" "$portainer_password_secret_atual"
+    local portainer_password_secret_novo="$SEGREDO_PAINEL_NOME"
+    local portainer_password_criado_agora="$SEGREDO_PAINEL_CRIADO_AGORA"
+
+    # Só esvazia a senha em texto quando ESTA chamada acabou de criar o
+    # secret com sucesso agora mesmo — em qualquer outro caso (sem label,
+    # sem valor novo pra gravar, ou a criação falhou), preserva o texto tal
+    # como get_env_val já lê hoje (comportamento atual, nunca regride).
+    local panel_pass_env_val="$panel_pass_val" sp_env_val="$pass_portainer"
+    local panel_admin_password_file_val="" portainer_password_file_val=""
+    if [ "$tem_label_credenciais" = true ]; then
+        panel_admin_password_file_val="/run/secrets/panel_admin_password"
+        portainer_password_file_val="/run/secrets/portainer_password"
+        [ "$panel_admin_password_criado_agora" = true ] && panel_pass_env_val=""
+        [ "$portainer_password_criado_agora" = true ] && sp_env_val=""
     fi
 
     # A tag PRECISA bater com APP_VERSION bakeada na imagem (src/lib/version.ts) —
     # host-dirs.ts procura localmente "setup-panel:${APP_VERSION}" antes de
     # puxar um fallback do Docker Hub. Se a stack rodasse "latest" mas só a
-    # tag $ENCHA_VERSION estivesse cacheada localmente (ou vice-versa), o
+    # tag $tag_imagem estivesse cacheada localmente (ou vice-versa), o
     # ensureHostDirs de QUALQUER stack com hostDirs (ex.: EnchaT Grátis)
     # cairia no fallback alpine/git e puxaria do Hub no meio do install.
     local env_json
     env_json=$(jq -nc \
         --arg host "$url_painel" \
-        --arg pu "$panel_user_val" --arg pp "$panel_pass_val" \
-        --arg su "$user_portainer" --arg sp "$pass_portainer" \
-        --arg tag "$ENCHA_VERSION" \
+        --arg pu "$panel_user_val" --arg pp "$panel_pass_env_val" \
+        --arg su "$user_portainer" --arg sp "$sp_env_val" \
+        --arg tag "$tag_imagem" \
+        --arg paf "$panel_admin_password_file_val" \
+        --arg ppf "$portainer_password_file_val" \
+        --arg pasn "$panel_admin_password_secret_novo" \
+        --arg ppsn "$portainer_password_secret_novo" \
         '[{name:"ENCHA_PANEL_HOST",value:$host},
           {name:"PANEL_ADMIN_USER",value:$pu},
           {name:"PANEL_ADMIN_PASSWORD",value:$pp},
           {name:"PORTAINER_USER",value:$su},
           {name:"PORTAINER_PASSWORD",value:$sp},
-          {name:"PANEL_IMAGE_TAG",value:$tag}]')
+          {name:"PANEL_IMAGE_TAG",value:$tag},
+          {name:"PANEL_ADMIN_PASSWORD_FILE",value:$paf},
+          {name:"PORTAINER_PASSWORD_FILE",value:$ppf},
+          {name:"PANEL_ADMIN_PASSWORD_SECRET_NAME",value:$pasn},
+          {name:"PORTAINER_PASSWORD_SECRET_NAME",value:$ppsn}]')
 
     local resp http_code
     resp=$(mktemp)
@@ -26993,6 +27164,13 @@ deploy_stack_painel_via_portainer() {
 
     echo -e "$(t deploy_stack_painel_via_portainer_sucesso)"
     rm -f "$resp"
+
+    # Só limpa a versão anterior depois que a stack REALMENTE aplicou a nova
+    # (acima) — nunca antes, senão uma stack que falhasse ficaria sem
+    # nenhuma versão válida do secret.
+    [ "$panel_admin_password_criado_agora" = true ] && limpar_segredos_antigos_painel "panel_admin_password" "$panel_admin_password_secret_novo"
+    [ "$portainer_password_criado_agora" = true ] && limpar_segredos_antigos_painel "portainer_password" "$portainer_password_secret_novo"
+
     return 0
 }
 
@@ -27123,6 +27301,12 @@ ferramenta_encha_panel() {
         return 1
     fi
 
+    # Knob de teste (mesma regra do ENCHA_SRC_BRANCH em main.sh): NUNCA em
+    # produção — existe só pra testar uma imagem específica (ex.: uma
+    # "sha-<12>" já publicada pelo CI de uma branch) numa VPS real antes de
+    # publicar. Vazia por padrão -> usa a tag da versão ($ENCHA_VERSION).
+    local tag_imagem_painel="${ENCHA_PANEL_IMAGE_TAG:-$ENCHA_VERSION}"
+
     # Garante que envsubst está disponível (vem no pacote gettext-base)
     if ! command -v envsubst >/dev/null 2>&1; then
         echo -e "$(t ferramenta_encha_panel_instalando_gettext)"
@@ -27164,18 +27348,20 @@ ferramenta_encha_panel() {
         echo -e "$(t ferramenta_encha_panel_fonte_falhou)"
     fi
 
-    # Puxa pela tag pinada ($ENCHA_VERSION), não "latest" — host-dirs.ts, no
-    # painel, procura localmente "setup-panel:${APP_VERSION}" antes de puxar
-    # um fallback do Docker Hub pra criar bind mounts; se só ":latest"
-    # estivesse cacheado, essa checagem local nunca bateria (Docker não sabe
-    # que duas tags apontam pro mesmo dígest sem baixar as duas).
-    echo -e "$(t ferramenta_encha_panel_passo4 "$ENCHA_VERSION")"
-    if docker pull "ghcr.io/enchaaluno/setup-panel:$ENCHA_VERSION" >/dev/null 2>&1; then
+    # Puxa pela tag pinada ($tag_imagem_painel — igual a $ENCHA_VERSION,
+    # exceto quando o knob de teste ENCHA_PANEL_IMAGE_TAG está definido), não
+    # "latest" — host-dirs.ts, no painel, procura localmente
+    # "setup-panel:${APP_VERSION}" antes de puxar um fallback do Docker Hub
+    # pra criar bind mounts; se só ":latest" estivesse cacheado, essa
+    # checagem local nunca bateria (Docker não sabe que duas tags apontam
+    # pro mesmo dígest sem baixar as duas).
+    echo -e "$(t ferramenta_encha_panel_passo4 "$tag_imagem_painel")"
+    if docker pull "ghcr.io/enchaaluno/setup-panel:$tag_imagem_painel" >/dev/null 2>&1; then
         echo -e "$(t ferramenta_encha_panel_imagem_ghcr)"
     elif [[ -d /root/encha-setup-panel/src ]]; then
         echo -e "$(t ferramenta_encha_panel_pull_falhou)"
         echo -e "$(t ferramenta_encha_panel_log_completo)"
-        docker build -t "ghcr.io/enchaaluno/setup-panel:$ENCHA_VERSION" /root/encha-setup-panel/ \
+        docker build -t "ghcr.io/enchaaluno/setup-panel:$tag_imagem_painel" /root/encha-setup-panel/ \
             > /var/log/encha-build.log 2>&1 &
         local build_pid=$!
         local start=$SECONDS
@@ -27222,6 +27408,12 @@ services:
       - source: encha_panel_master_key
         target: master_key
         mode: 0444
+      - source: panel_admin_password
+        target: panel_admin_password
+        mode: 0400
+      - source: portainer_password
+        target: portainer_password
+        mode: 0400
     volumes:
       - encha_panel_data:/app/data
       - /root/dados_vps:/app/vps-context:ro
@@ -27239,6 +27431,8 @@ services:
       - PANEL_ADMIN_PASSWORD=${PANEL_ADMIN_PASSWORD}
       - PORTAINER_USER=${PORTAINER_USER}
       - PORTAINER_PASSWORD=${PORTAINER_PASSWORD}
+      - PANEL_ADMIN_PASSWORD_FILE=${PANEL_ADMIN_PASSWORD_FILE}
+      - PORTAINER_PASSWORD_FILE=${PORTAINER_PASSWORD_FILE}
     read_only: true
     tmpfs:
       - /tmp
@@ -27257,6 +27451,12 @@ services:
       restart_policy:
         condition: on-failure
         max_attempts: 5
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          memory: 128M
       labels:
         - "traefik.enable=true"
         - "traefik.docker.network=${ENCHA_PANEL_NETWORK}"
@@ -27268,6 +27468,12 @@ services:
 secrets:
   encha_panel_master_key:
     external: true
+  panel_admin_password:
+    external: true
+    name: ${PANEL_ADMIN_PASSWORD_SECRET_NAME:-panel_admin_password_bootstrap}
+  portainer_password:
+    external: true
+    name: ${PORTAINER_PASSWORD_SECRET_NAME:-portainer_password_bootstrap}
 volumes:
   encha_panel_data:
     external: true
@@ -27285,7 +27491,7 @@ TEMPLATE
     # 6) Deploy via API do Portainer (não `docker stack deploy` — ver
     # deploy_stack_painel_via_portainer para o porquê).
     echo -e "$(t ferramenta_encha_panel_passo6)"
-    if ! deploy_stack_painel_via_portainer /tmp/encha-panel.yaml; then
+    if ! deploy_stack_painel_via_portainer /tmp/encha-panel.yaml "$tag_imagem_painel"; then
         return 1
     fi
 
