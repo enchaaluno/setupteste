@@ -1547,6 +1547,68 @@ renomear_admin_portainer_se_necessario() {
     fi
 }
 
+# Compara duas versões "X.Y.Z" (semver simples, sem pré-release/build).
+# Retorna 0 (verdadeiro) só se $1 for estritamente maior que $2; formato
+# fora do padrão em qualquer um dos dois é tratado como "não é maior" (1) —
+# nunca aborta o script (sem 'set -e' aqui dentro).
+versao_semver_maior() {
+    local a="$1" b="$2"
+    [[ "$a" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    [[ "$b" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    local a1 a2 a3 b1 b2 b3
+    IFS=. read -r a1 a2 a3 <<< "$a"
+    IFS=. read -r b1 b2 b3 <<< "$b"
+    if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return $?; fi
+    if [ "$a2" -ne "$b2" ]; then [ "$a2" -gt "$b2" ]; return $?; fi
+    [ "$a3" -gt "$b3" ]
+}
+
+# Numa reinstalação, evita rebaixar o Portainer/agent que já está em
+# execução. Chamado ANTES de qualquer 'docker stack rm portainer' (a stack
+# antiga ainda precisa estar de pé para o /api/system/status responder).
+#
+# Lê a versão REAL hoje em execução (não a tag da imagem — que pode ser só
+# "latest" numa instalação de antes deste ciclo, inútil para comparar) via
+# /api/system/status do próprio Portainer ativo. Compara com
+# PORTAINER_VERSION (semver simples) e decide:
+#   - em uso MAIOR que a fixa -> implanta a versão em uso (nunca rebaixa);
+#   - em uso MENOR OU IGUAL   -> implanta a fixa;
+#   - não deu para ler (erro/vazio, ex.: instalação muito antiga sem essa
+#     rota, ou rede fora do ar) -> não arrisca comparar: reusa a imagem
+#     completa (com tag) que já está em cada serviço, tal como está hoje.
+#
+# Uso: resolver_imagens_portainer <rede> <ja_inicializado>
+# Efeitos: define IMAGEM_AGENT_PORTAINER e IMAGEM_SERVER_PORTAINER (globais)
+# — o que os dois YAMLs (portainer-agent.yaml e portainer.yaml) devem usar.
+resolver_imagens_portainer() {
+    local rede="$1" ja_inicializado="$2"
+    IMAGEM_AGENT_PORTAINER="portainer/agent:${PORTAINER_VERSION}"
+    IMAGEM_SERVER_PORTAINER="portainer/portainer-ce:${PORTAINER_VERSION}"
+
+    # Instalação nova: não há serviço anterior para comparar.
+    [ "$ja_inicializado" = true ] || return 0
+
+    local versao_atual
+    versao_atual=$(sudo docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
+        -s -m 10 "http://portainer_portainer:9000/api/system/status" 2>/dev/null \
+        | jq -r '.Version // empty' 2>/dev/null)
+
+    if [ -z "$versao_atual" ]; then
+        local img_agent img_server
+        img_agent=$(sudo docker service inspect portainer_agent --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)
+        img_server=$(sudo docker service inspect portainer_portainer --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)
+        [ -n "$img_agent" ] && IMAGEM_AGENT_PORTAINER="$img_agent"
+        [ -n "$img_server" ] && IMAGEM_SERVER_PORTAINER="$img_server"
+        return 0
+    fi
+
+    if versao_semver_maior "$versao_atual" "$PORTAINER_VERSION"; then
+        IMAGEM_AGENT_PORTAINER="portainer/agent:${versao_atual}"
+        IMAGEM_SERVER_PORTAINER="portainer/portainer-ce:${versao_atual}"
+    fi
+    # Menor ou igual: mantém a fixa (já preenchida no início da função).
+}
+
 
 
 MSG_PT[wait_stack_aguarde]="\e[33m⏳ Aguarde alguns instantes. Se demorar mais de 5 minutos, cancele e tente novamente.\e[0m"
