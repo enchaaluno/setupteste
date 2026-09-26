@@ -76,6 +76,21 @@ for funcao in ferramenta_traefik_e_portainer instalar_traefik_e_portainer; do
     continue
   fi
 
+  # E precisa vir ANTES do 'docker stack rm portainer': depois dele não há
+  # Portainer para responder /api/system/status nem serviço para
+  # 'docker service inspect', e a reinstalação cairia sempre na fixa —
+  # rebaixando quem já roda uma versão maior.
+  linha_resolver="$(printf '%s\n' "$bloco" | grep -nE '^[[:space:]]*resolver_imagens_portainer ' | head -1 | cut -d: -f1)"
+  linha_rm="$(printf '%s\n' "$bloco" | grep -nE '^[[:space:]]*(sudo )?docker stack rm portainer' | head -1 | cut -d: -f1)"
+  if [ -z "$linha_rm" ]; then
+    falha "$funcao: não encontrei 'docker stack rm portainer' para conferir a ordem"
+    continue
+  fi
+  if [ -z "$linha_resolver" ] || [ "$linha_resolver" -ge "$linha_rm" ]; then
+    falha "$funcao: resolver_imagens_portainer precisa rodar ANTES de 'docker stack rm portainer' (resolver=${linha_resolver:-?}, rm=$linha_rm)"
+    continue
+  fi
+
   ref_agent="$(printf '%s\n' "$bloco" | grep -oE 'image: portainer/agent:[^[:space:]]+|image: \$\{IMAGEM_AGENT_PORTAINER\}' | sort -u)"
   ref_server="$(printf '%s\n' "$bloco" | grep -oE 'image: portainer/portainer-ce:[^[:space:]]+|image: \$\{IMAGEM_SERVER_PORTAINER\}' | sort -u)"
 
@@ -117,6 +132,29 @@ elif [ "$versao_shell" != "$versao_ts" ]; then
 else
   ok "PORTAINER_VERSION igual nos dois lados ($versao_shell)"
 fi
+
+# --- 4. ENCHA_CURL_IMAGE: tag X.Y.Z + digest, e sempre usada entre aspas ---
+# O curl recebe a senha do Portainer e o JWT na linha de comando: a imagem
+# precisa ser íntegra (digest do índice multi-arch, não só a tag).
+curl_img="$(grep -oE '^ENCHA_CURL_IMAGE="[^"]+"' secondary.sh | head -1 | sed -E 's/^ENCHA_CURL_IMAGE="([^"]+)"$/\1/')"
+if ! [[ "$curl_img" =~ ^curlimages/curl:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+  falha "ENCHA_CURL_IMAGE precisa ser curlimages/curl:X.Y.Z@sha256:<64 hex> (achado: '${curl_img}')"
+else
+  ok "ENCHA_CURL_IMAGE fixa por tag + digest"
+fi
+if sed -n '1,20p' secondary.sh | grep -q '^ENCHA_CURL_IMAGE='; then
+  falha "ENCHA_CURL_IMAGE está nas linhas 1-20 do secondary.sh (reservadas ao ENCHA_VERSION)"
+fi
+
+for arquivo in main.sh secondary.sh; do
+  sem_aspas="$(grep_sem_comentario "$arquivo" '\$\{?ENCHA_CURL_IMAGE' | grep -E '(^|[^"])\$\{?ENCHA_CURL_IMAGE')"
+  if [ -n "$sem_aspas" ]; then
+    falha "$arquivo usa ENCHA_CURL_IMAGE sem aspas:"
+    echo "$sem_aspas"
+  else
+    ok "$arquivo: ENCHA_CURL_IMAGE sempre entre aspas"
+  fi
+done
 
 # PORTAINER_VERSION não pode estar nas primeiras 20 linhas do secondary.sh
 # (reservadas ao ENCHA_VERSION / set-version.sh).
