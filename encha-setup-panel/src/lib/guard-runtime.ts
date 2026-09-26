@@ -103,7 +103,10 @@ export async function garantirGuardaSwarmOuLanca(token: string, endpointId: numb
       );
       return;
     }
-    if (atual.Spec.Labels?.[LABEL_GERENCIADO] === "false") {
+    // Tolerante na grafia ("False", " false ") de propósito: errar aqui para o
+    // lado de NÃO tocar é o seguro — um opt-out escrito "False" no Portainer
+    // não pode ser ignorado e o serviço do operador sobrescrito.
+    if (atual.Spec.Labels?.[LABEL_GERENCIADO]?.trim().toLowerCase() === "false") {
       console.log(
         `[guard] ${GUARD_SERVICE_NAME} está marcado com ${LABEL_GERENCIADO}=false — respeitando a escolha do operador, não tocando nele.`
       );

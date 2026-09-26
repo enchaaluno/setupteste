@@ -365,6 +365,22 @@ describe("garantirGuardaSwarm", () => {
     expect(updateServiceMock).not.toHaveBeenCalled();
   });
 
+  it("gerenciado com outra grafia ('False', ' FALSE ') também é respeitado -> NUNCA chama create/update", async () => {
+    for (const valor of ["False", " FALSE "]) {
+      vi.resetModules();
+      const { createServiceMock, updateServiceMock } = await setupMocks({
+        guardAtual: fakeGuardServiceIdentico({
+          image: "imagem-bem-diferente@sha256:x",
+          labels: { "com.encha.guard.gerenciado": valor },
+        }),
+      });
+      const { garantirGuardaSwarm } = await import("./guard-runtime");
+      await garantirGuardaSwarm("tok", 1);
+      expect(createServiceMock).not.toHaveBeenCalled();
+      expect(updateServiceMock).not.toHaveBeenCalled();
+    }
+  });
+
   it("serviço 'encha-guard' com label com.encha.role diferente (nome parecido/conflito) -> NUNCA toca", async () => {
     const erroMock = vi.spyOn(console, "error").mockImplementation(() => {});
     const { createServiceMock, updateServiceMock } = await setupMocks({
