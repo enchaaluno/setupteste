@@ -113,16 +113,30 @@ EOF
 
 # fail2ban-client falso: presença no PATH = "pacote instalado" (a função só
 # checa `command -v fail2ban-client`); "ping" segue $FAKE_FAIL2BAN_PING (1 =
-# responde, 0 = recusa — simula fail2ban de pé mas sem confirmar).
+# responde, 0 = recusa); "status sshd" segue $FAKE_FAIL2BAN_JAIL (1 = a jail
+# sshd existe e responde, 0 = não — servidor caído, ou de pé sem a jail). A
+# confirmação real da função é SÓ "status sshd" (auditoria C10): ping e
+# systemctl is-active mentem logo depois do restart (Type=simple).
 cat > "$BINDIR/fail2ban-client" <<'EOF'
 #!/bin/bash
 if [ "$1" = "ping" ]; then
   [ "${FAKE_FAIL2BAN_PING:-1}" = "1" ] && exit 0 || exit 1
 fi
+if [ "$1" = "status" ] && [ "${2:-}" = "sshd" ]; then
+  [ -n "${FAKE_FAIL2BAN_STATUS_LOG:-}" ] && echo "status sshd" >> "$FAKE_FAIL2BAN_STATUS_LOG"
+  [ "${FAKE_FAIL2BAN_JAIL:-1}" = "1" ] && exit 0 || exit 1
+fi
 exit 0
 EOF
 
-chmod +x "$BINDIR"/apt-get "$BINDIR"/sshd "$BINDIR"/systemctl "$BINDIR"/fail2ban-client
+# sleep falso: a função espera a jail subir (até ~15 s) — no teste, o
+# cenário de falha não pode custar 15 s de verdade.
+cat > "$BINDIR/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+
+chmod +x "$BINDIR"/apt-get "$BINDIR"/sshd "$BINDIR"/systemctl "$BINDIR"/fail2ban-client "$BINDIR"/sleep
 
 # Roda instalar_protecao_ssh isolada num subshell (PATH falso + prefixos
 # temporários). Ecoa RC=<código> no final do stdout salvo em $3 pra
@@ -262,16 +276,87 @@ else
 fi
 
 ETC5="$(mktemp -d)"; DV5="$(mktemp -d)"
-FAKE_SYSTEMCTL_ATIVO=0 FAKE_FAIL2BAN_PING=0 rodar "$ETC5" "$DV5" "$DV5/saida.log"
+FAKE_SYSTEMCTL_ATIVO=0 FAKE_FAIL2BAN_PING=0 FAKE_FAIL2BAN_JAIL=0 rodar "$ETC5" "$DV5" "$DV5/saida.log"
 if [ -f "$DV5/seguranca" ]; then
-  falha "marcador foi gravado mesmo com fail2ban NÃO confirmando ativo (systemctl e ping falharam) — mentira pro painel"
+  falha "marcador foi gravado mesmo com fail2ban NÃO confirmando ativo (systemctl, ping e status sshd falharam) — mentira pro painel"
 else
-  ok "fail2ban 'falhou' no fake (systemctl e ping negativos): marcador NÃO gravado"
+  ok "fail2ban 'falhou' no fake (systemctl, ping e status sshd negativos): marcador NÃO gravado"
 fi
 if grep -q "RC=1" "$DV5/saida.log"; then
   ok "cenário de falha: instalar_protecao_ssh retornou 1"
 else
   falha "instalar_protecao_ssh não retornou 1 no cenário de falha: $(cat "$DV5/saida.log")"
+fi
+
+# Auditoria C10 — a corrida medida na VPS de teste: logo depois do restart,
+# systemctl já diz "active" e o ping pode até responder, mas a jail sshd
+# não existe (config quebrada: o servidor morre ~1 s depois; ou a jail
+# desligada por outro jail.d/*.local). Só "status sshd" conta.
+ETC5B="$(mktemp -d)"; DV5B="$(mktemp -d)"
+FAKE_SYSTEMCTL_ATIVO=1 FAKE_FAIL2BAN_PING=1 FAKE_FAIL2BAN_JAIL=0 rodar "$ETC5B" "$DV5B" "$DV5B/saida.log"
+if [ -f "$DV5B/seguranca" ]; then
+  falha "marcador gravado com systemctl 'active' + ping OK mas SEM a jail sshd — o painel diria 'protegido' com o fail2ban prestes a cair"
+else
+  ok "systemctl 'active' + ping OK mas jail sshd ausente: marcador NÃO gravado"
+fi
+if grep -q "RC=1" "$DV5B/saida.log"; then
+  ok "jail sshd ausente: instalar_protecao_ssh retornou 1"
+else
+  falha "jail sshd ausente: instalar_protecao_ssh não retornou 1: $(cat "$DV5B/saida.log")"
+fi
+
+# A jail demora a responder (servidor ainda lendo a config): a função espera
+# em vez de desistir na primeira tentativa. Aqui a jail só "sobe" na 3ª
+# consulta.
+ETC5C="$(mktemp -d)"; DV5C="$(mktemp -d)"
+cat > "$BINDIR/fail2ban-client-lento" <<'EOF'
+#!/bin/bash
+if [ "$1" = "status" ] && [ "${2:-}" = "sshd" ]; then
+  n=$(cat "$FAKE_CONTADOR" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_CONTADOR"
+  [ "$n" -ge 3 ] && exit 0 || exit 1
+fi
+exit 0
+EOF
+chmod +x "$BINDIR/fail2ban-client-lento"
+BIN_LENTO="$(mktemp -d)"
+cp "$BINDIR"/apt-get "$BINDIR"/sshd "$BINDIR"/systemctl "$BINDIR"/sleep "$BIN_LENTO"/
+cp "$BINDIR/fail2ban-client-lento" "$BIN_LENTO/fail2ban-client"
+(
+  set +u
+  export PATH="$BIN_LENTO:$PATH"
+  export ENCHA_FAIL2BAN_ETC_PREFIX="$ETC5C" FAKE_CONTADOR="$DV5C/contador"
+  fn="$(fn_instalar_com_dv "$DV5C")"
+  eval "$fn"
+  instalar_protecao_ssh
+  echo "RC=$?"
+) > "$DV5C/saida.log" 2>&1
+if [ -f "$DV5C/seguranca" ] && grep -q "RC=0" "$DV5C/saida.log"; then
+  ok "jail sshd lenta (responde na 3ª consulta): a função espera e confirma"
+else
+  falha "jail sshd lenta: a função desistiu antes da jail responder: $(cat "$DV5C/saida.log")"
+fi
+rm -rf "$BIN_LENTO"
+
+# Marcador de uma execução anterior não pode sobreviver a uma falha: senão
+# o painel continua dizendo "SSH protegido" com o fail2ban caído.
+ETC5D="$(mktemp -d)"; DV5D="$(mktemp -d)"
+printf 'fail2ban=ok\n' > "$DV5D/seguranca"
+FAKE_SYSTEMCTL_ATIVO=0 FAKE_FAIL2BAN_PING=0 FAKE_FAIL2BAN_JAIL=0 rodar "$ETC5D" "$DV5D" "$DV5D/saida.log"
+if [ -f "$DV5D/seguranca" ]; then
+  falha "marcador ANTIGO sobreviveu a uma execução que falhou — o painel mentiria 'SSH protegido'"
+else
+  ok "falha remove o marcador antigo (nenhum 'protegido' velho sobrevive)"
+fi
+
+# "enable" sempre, mesmo com o serviço já ativo — senão um fail2ban
+# desabilitado no boot some no próximo reboot com o marcador gravado.
+ETC5E="$(mktemp -d)"; DV5E="$(mktemp -d)"
+FAKE_SYSTEMCTL_LOG="$DV5E/systemctl.log" FAKE_SYSTEMCTL_ATIVO=1 FAKE_FAIL2BAN_JAIL=1 \
+  rodar "$ETC5E" "$DV5E" "$DV5E/saida.log"
+if grep -qE '^enable( --now)? fail2ban$' "$DV5E/systemctl.log" 2>/dev/null; then
+  ok "serviço já ativo: 'systemctl enable fail2ban' chamado mesmo assim (sobrevive a reboot)"
+else
+  falha "serviço já ativo: 'systemctl enable fail2ban' não foi chamado — $(tr '\n' ';' < "$DV5E/systemctl.log" 2>/dev/null)"
 fi
 
 # ============================================================

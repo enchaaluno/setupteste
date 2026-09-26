@@ -25841,6 +25841,8 @@ instalar_protecao_ssh() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd > /dev/null 2>&1
 
     if ! command -v fail2ban-client &> /dev/null; then
+        # Sem fail2ban não há proteção: nenhum marcador antigo pode ficar.
+        rm -f /root/dados_vps/seguranca
         echo -e "$(t instalar_protecao_ssh_falha_pacote)"
         return 1
     fi
@@ -25887,22 +25889,40 @@ bantime.maxtime = 1d
 ignoreip = $ignoreip
 EOF
 
-    if systemctl is-active --quiet fail2ban 2>/dev/null; then
-        systemctl restart fail2ban > /dev/null 2>&1
-    else
-        systemctl enable --now fail2ban > /dev/null 2>&1
-    fi
+    # "enable" SEMPRE (não só quando estava parado): um fail2ban ativo mas
+    # desabilitado no boot some no próximo reboot — e o painel continuaria
+    # dizendo "SSH protegido". "restart" sobe o serviço se estiver parado e
+    # relê a config nova se já estiver rodando.
+    systemctl enable fail2ban > /dev/null 2>&1
+    systemctl restart fail2ban > /dev/null 2>&1
 
     # Confirma de verdade antes de gravar o marcador — NUNCA no escuro (ver
     # o contrato em encha-setup-panel/src/lib/vps-context.ts, C8): o painel
     # usa a presença de /root/dados_vps/seguranca como "SSH protegido",
     # então gravar sem sucesso real mentiria pro operador.
-    local protegido=0
-    if fail2ban-client ping > /dev/null 2>&1 || systemctl is-active --quiet fail2ban 2>/dev/null; then
-        protegido=1
-    fi
+    #
+    # A prova é a JAIL sshd respondendo (`fail2ban-client status sshd`), com
+    # espera — nunca `systemctl is-active` nem só `ping` (auditoria C10):
+    # fail2ban.service é Type=simple, então logo depois do restart o
+    # systemd já diz "active" enquanto o servidor ainda lê a config; com um
+    # jail.d quebrado (qualquer arquivo, não só o nosso) o fail2ban 1.1.0
+    # morre ~1 s depois e o serviço fica "failed" — medido na VPS de teste:
+    # a versão antiga gravava o marcador e dizia "sucesso" nesse caso. E o
+    # servidor pode estar de pé sem a jail sshd (um jail.d/*.local posterior
+    # com "enabled = false"), o que `ping` não enxerga.
+    local protegido=0 tentativa
+    for tentativa in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if fail2ban-client status sshd > /dev/null 2>&1; then
+            protegido=1
+            break
+        fi
+        sleep 1
+    done
 
     if [ "$protegido" -ne 1 ]; then
+        # Um marcador de uma execução anterior bem-sucedida passaria a
+        # mentir: o painel mostraria "SSH protegido" com o fail2ban caído.
+        rm -f /root/dados_vps/seguranca
         echo -e "$(t instalar_protecao_ssh_falha_servico)"
         return 1
     fi
