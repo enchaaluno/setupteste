@@ -200,6 +200,41 @@ describe("peersFromNodes", () => {
     expect(peersFromNodes(nodes)).toEqual(["10.0.0.5", "10.0.0.6"]);
   });
 
+  // Entradas adversariais/malformadas: nunca lançam, e nada que não seja um
+  // IP literal de par chega a ENCHA_GUARD_PEERS (o script aceita CIDR lá).
+  it("nó sem Status, Status sem Addr, Addr undefined e elemento null são ignorados sem lançar", () => {
+    const nodes = [
+      { ID: "sem-status" },
+      { ID: "status-vazio", Status: {} },
+      { ID: "addr-undefined", Status: { Addr: undefined } },
+      null,
+      { ID: "ok", Status: { Addr: "10.0.0.6" } },
+      { ID: "ok2", Status: { Addr: "10.0.0.7" } },
+    ] as unknown as DockerNode[];
+    expect(peersFromNodes(nodes)).toEqual(["10.0.0.6", "10.0.0.7"]);
+  });
+
+  it("Status.Addr com porta ('10.0.0.5:2377') e IPv6 '[::1]:2377' saem sem porta/colchetes", () => {
+    expect(peersFromNodes([no("10.0.0.5:2377"), no("[fd00::2]:2377")])).toEqual(["10.0.0.5", "fd00::2"]);
+  });
+
+  it("CIDR em Addr NUNCA vira par ('0.0.0.0/0' liberaria a Internet inteira)", () => {
+    expect(peersFromNodes([no("0.0.0.0/0"), no("::/0"), no("10.0.0.0/8"), no("10.0.0.6")])).toEqual(["10.0.0.6"]);
+  });
+
+  it("Status.Addr '0.0.0.0' (não especificado) cai para o IP real de ManagerStatus.Addr", () => {
+    expect(peersFromNodes([no("0.0.0.0", "31.97.144.25:2377"), no("10.0.0.6")])).toEqual([
+      "31.97.144.25",
+      "10.0.0.6",
+    ]);
+    expect(peersFromNodes([no("::", "[fd00::9]:2377"), no("10.0.0.6")])).toEqual(["fd00::9", "10.0.0.6"]);
+  });
+
+  it("lixo que não é IP literal (lista com vírgula, espaço, hostname, zona IPv6) é ignorado", () => {
+    const nodes = [no("10.0.0.5,1.2.3.4"), no("10.0.0.5 1.2.3.4"), no("node-1.local"), no("fe80::1%eth0"), no("10.0.0.6")];
+    expect(peersFromNodes(nodes)).toEqual(["10.0.0.6"]);
+  });
+
   it("determinismo: mesma entrada produz a mesma saída", () => {
     const nodes = [no("10.0.0.5"), no("10.0.0.6")];
     expect(peersFromNodes(nodes)).toEqual(peersFromNodes(nodes.map((n) => ({ ...n }))));

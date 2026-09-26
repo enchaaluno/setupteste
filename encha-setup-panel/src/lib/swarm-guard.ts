@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { DockerNode, ServiceSpec } from "./portainer";
 
 // Builder PURO do spec do serviço Swarm `encha-guard` (ciclo C5 do plano de
@@ -103,19 +104,37 @@ export function montarSpecGuarda(args: MontarSpecGuardaArgs): ServiceSpec {
 // alternativa quando `Status.Addr` vier vazio/malformado, e costuma trazer
 // porta (":2377") — por isso os dois passam pela mesma limpeza de
 // porta/colchetes de IPv6 abaixo.
-function extrairEndereco(node: DockerNode): string | null {
+//
+// Só aceita um IP LITERAL (IPv4 ou IPv6, sem prefixo/CIDR, sem zona "%eth0",
+// sem vírgula/espaço) e nunca o endereço não especificado ("0.0.0.0"/"::").
+// O script do guarda aceita CIDR em ENCHA_GUARD_PEERS, então um "Addr" que
+// viesse como "0.0.0.0/0" viraria "liberar a Internet inteira"; e um
+// "0.0.0.0" em Status.Addr (o Docker já reportou isso para managers) tomava
+// o lugar do IP real que está em ManagerStatus.Addr, deixando o par de
+// verdade FORA da allowlist (tráfego do cluster descartado). Candidato que
+// não passa aqui cai para o próximo; nenhum passando = nó ignorado.
+function extrairEndereco(node: DockerNode | null | undefined): string | null {
+  if (!node || typeof node !== "object") return null;
   const candidatos = [node.Status?.Addr, node.ManagerStatus?.Addr];
   for (const bruto of candidatos) {
     const limpo = limparEndereco(bruto);
-    if (limpo) return limpo;
+    if (limpo && enderecoDePar(limpo)) return limpo;
   }
   return null;
 }
 
+function enderecoDePar(ip: string): boolean {
+  if (ip.includes("%")) return false;
+  const familia = isIP(ip);
+  if (familia === 0) return false;
+  if (familia === 4) return ip !== "0.0.0.0";
+  return !/^[0:]+$/.test(ip); // "::", "0::0", "0:0:0:0:0:0:0:0"
+}
+
 // "[::1]:2377" -> "::1" · "10.0.0.5:2377" -> "10.0.0.5" · "10.0.0.5" -> "10.0.0.5"
 // Entrada vazia/ausente/malformada (ex.: "[" sem "]" de fechamento) -> null.
-function limparEndereco(bruto: string | undefined): string | null {
-  if (!bruto) return null;
+function limparEndereco(bruto: unknown): string | null {
+  if (typeof bruto !== "string" || !bruto) return null;
   const valor = bruto.trim();
   if (!valor) return null;
 
