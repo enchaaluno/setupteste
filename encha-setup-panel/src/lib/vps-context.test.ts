@@ -79,6 +79,9 @@ describe("protecaoSshInstalada", () => {
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
     delete process.env.VPS_CONTEXT_DIR;
+    // Spy de console.warn de um teste não pode vazar a contagem para o
+    // próximo (testes-setup.ts não restaura mocks sozinho).
+    vi.restoreAllMocks();
   });
 
   async function importVpsContext() {
@@ -120,4 +123,45 @@ describe("protecaoSshInstalada", () => {
       chmodSync(caminho, 0o644); // permite o rmSync do afterEach limpar o diretório
     }
   );
+  // Sem cache (decisão do C8): o marcador aparece com o painel já no ar
+  // quando o operador roda `proteger-ssh` — e um cache (plausível, imitando
+  // getVpsContext) faria o aviso nunca sumir sem reiniciar o container.
+  // Mutante que este teste mata: memorizar o resultado entre chamadas.
+  it("sem cache: marcador criado/removido com o painel no ar muda o resultado na chamada seguinte", async () => {
+    const { protecaoSshInstalada } = await importVpsContext();
+    const caminho = join(dir, "seguranca");
+    expect(protecaoSshInstalada()).toBe(false);
+    writeFileSync(caminho, "");
+    expect(protecaoSshInstalada()).toBe(true);
+    rmSync(caminho);
+    expect(protecaoSshInstalada()).toBe(false);
+  });
+
+  // Mesma garantia do teste de chmod acima, mas sem depender de não ser root
+  // (o chmod 000 não barra root e aquele teste é pulado) — o erro vem de um
+  // node:fs simulado. 3 chamadas seguidas com EACCES: a flag é de módulo,
+  // então só a primeira loga; mutante que isto mata: flag local à função.
+  it("erro não-ENOENT simulado (EACCES) em 3 chamadas seguidas -> false nas 3, loga 1x só", async () => {
+    vi.resetModules();
+    process.env.VPS_CONTEXT_DIR = dir;
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...real,
+        readFileSync: vi.fn(() => {
+          throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        }),
+      };
+    });
+    const aviso = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { protecaoSshInstalada } = await import("./vps-context");
+      expect(protecaoSshInstalada()).toBe(false);
+      expect(protecaoSshInstalada()).toBe(false);
+      expect(protecaoSshInstalada()).toBe(false);
+      expect(aviso).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("node:fs");
+    }
+  });
 });
