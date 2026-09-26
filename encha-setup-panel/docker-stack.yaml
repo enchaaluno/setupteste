@@ -61,11 +61,20 @@ services:
       - source: encha_panel_master_key
         target: master_key
         mode: 0444
+      # uid/gid 1001 = usuário "nextjs" do Dockerfile (USER nextjs). Sem eles
+      # o Swarm monta o arquivo como root:root, e com mode 0400 o painel não
+      # consegue ler a própria senha (EACCES -> lerSegredo devolve undefined:
+      # admin local cai no passthrough do Portainer, credencial de serviço dá
+      # 503). Medido no Portainer 2.45.1 real (auditoria C9).
       - source: panel_admin_password
         target: panel_admin_password
+        uid: "1001"
+        gid: "1001"
         mode: 0400
       - source: portainer_password
         target: portainer_password
+        uid: "1001"
+        gid: "1001"
         mode: 0400
     volumes:
       - encha_panel_data:/app/data

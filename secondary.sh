@@ -27410,9 +27410,13 @@ services:
         mode: 0444
       - source: panel_admin_password
         target: panel_admin_password
+        uid: "1001"
+        gid: "1001"
         mode: 0400
       - source: portainer_password
         target: portainer_password
+        uid: "1001"
+        gid: "1001"
         mode: 0400
     volumes:
       - encha_panel_data:/app/data

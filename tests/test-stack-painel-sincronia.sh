@@ -79,6 +79,26 @@ for arquivo in "$YAML" "$HEREDOC_FILE"; do
     falha "$nome_exibicao: não monta panel_admin_password como esperado"
   fi
 
+  # Cada mount de senha precisa de uid/gid 1001 (USER nextjs do Dockerfile)
+  # JUNTO do mode 0400 — sem uid o Swarm monta root:root 0400 e o painel não
+  # lê a própria senha (medido no Portainer 2.45.1 real, auditoria C9). Olha
+  # o BLOCO do mount (source + as 4 linhas seguintes), não o arquivo inteiro:
+  # um "mode: 0400"/"uid:" solto em outro lugar não pode satisfazer isto.
+  for base in panel_admin_password portainer_password; do
+    bloco="$(awk -v b="$base" '
+      $0 ~ "^[[:space:]]*- source: " b "$" { f = 1; n = 0; next }
+      f && n < 4 { print; n++ }
+      f && n >= 4 { exit }
+    ' "$arquivo")"
+    if printf '%s\n' "$bloco" | grep -qE '^[[:space:]]*uid: "1001"$' \
+       && printf '%s\n' "$bloco" | grep -qE '^[[:space:]]*gid: "1001"$' \
+       && printf '%s\n' "$bloco" | grep -qE '^[[:space:]]*mode: 0400$'; then
+      ok "$nome_exibicao: mount de $base legível pelo painel (uid/gid 1001 + mode 0400)"
+    else
+      falha "$nome_exibicao: mount de $base sem uid/gid \"1001\" + mode 0400 — o painel (USER nextjs, uid 1001) não consegue ler o arquivo"
+    fi
+  done
+
   if grep -qE '^\s*- source: portainer_password$' "$arquivo" \
      && grep -qE '^\s*target: portainer_password$' "$arquivo"; then
     ok "$nome_exibicao: monta o secret portainer_password"
