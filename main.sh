@@ -13,6 +13,15 @@ ENCHA_VERSION="0.3.5"
 # publicada (ver ali).
 ENCHA_SRC_BRANCH="${ENCHA_SRC_BRANCH:-main}"
 
+# Tag da imagem do Encha Setup Panel a puxar/buildar em
+# ferramenta_encha_panel (secondary.sh). SEMPRE vazia em produção — nunca
+# mude o padrão aqui. Existe só pra testar uma imagem específica (ex.: uma
+# "sha-<12>" já publicada pelo CI de uma branch) numa VPS real antes de
+# publicar: exporte ENCHA_PANEL_IMAGE_TAG=sha-xxxxxxxxxxxx antes de rodar o
+# curl (ou antes de chamar a opção do menu). Vazia -> usa $ENCHA_VERSION,
+# igual sempre foi.
+ENCHA_PANEL_IMAGE_TAG="${ENCHA_PANEL_IMAGE_TAG:-}"
+
 # Exportado ANTES de qualquer apt/docker-ce install, inclusive dentro de
 # secondary.sh (é `source`ado neste mesmo shell — main.sh:710 — então herda
 # estas env vars sem precisar prefixar cada chamada individualmente). Sem
@@ -1453,6 +1462,10 @@ MSG_PT[mostrar_resumo_passo2]="  ${cinza}PANEL_ADMIN_PASSWORD → editar → Upd
 MSG_EN[mostrar_resumo_passo2]="  ${cinza}PANEL_ADMIN_PASSWORD → edit → Update the stack.${reset}"
 MSG_ES[mostrar_resumo_passo2]="  ${cinza}PANEL_ADMIN_PASSWORD → editar → Update the stack.${reset}"
 
+MSG_PT[mostrar_resumo_passo3]="  ${cinza}Depois, rode a opção 97 (Atualizar o painel) para voltar a guardar como segredo.${reset}"
+MSG_EN[mostrar_resumo_passo3]="  ${cinza}Afterwards, run option 97 (Update panel) to go back to storing it as a secret.${reset}"
+MSG_ES[mostrar_resumo_passo3]="  ${cinza}Después, ejecute la opción 97 (Actualizar panel) para volver a guardarla como secret.${reset}"
+
 MSG_PT[mostrar_resumo_suporte]="${ciano}${negrito}Suporte:${reset}"
 MSG_EN[mostrar_resumo_suporte]="${ciano}${negrito}Support:${reset}"
 MSG_ES[mostrar_resumo_suporte]="${ciano}${negrito}Soporte:${reset}"
@@ -1478,6 +1491,7 @@ mostrar_resumo_final() {
     echo -e "$(t mostrar_resumo_esqueceu_senha)"
     echo -e "$(t mostrar_resumo_passo1)"
     echo -e "$(t mostrar_resumo_passo2)"
+    echo -e "$(t mostrar_resumo_passo3)"
     echo ""
     echo -e "$(t mostrar_resumo_suporte)"
     echo -e "  ${azul}📧 atendimento@encha.ai${reset}"
