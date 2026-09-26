@@ -1574,8 +1574,10 @@ versao_semver_maior() {
 #   - em uso MAIOR que a fixa -> implanta a versão em uso (nunca rebaixa);
 #   - em uso MENOR OU IGUAL   -> implanta a fixa;
 #   - não deu para ler (erro/vazio, ex.: instalação muito antiga sem essa
-#     rota, ou rede fora do ar) -> não arrisca comparar: reusa a imagem
-#     completa (com tag) que já está em cada serviço, tal como está hoje.
+#     rota, ou rede fora do ar) OU a versão lida não é "X.Y.Z" estrito (ex.:
+#     "2.46.0-rc1" — não dá para comparar com segurança) -> não arrisca:
+#     reusa a imagem completa (com tag) que já está em cada serviço, tal
+#     como está hoje. Implantar a fixa nesse caso poderia rebaixar.
 #
 # Uso: resolver_imagens_portainer <rede> <ja_inicializado>
 # Efeitos: define IMAGEM_AGENT_PORTAINER e IMAGEM_SERVER_PORTAINER (globais)
@@ -1593,7 +1595,10 @@ resolver_imagens_portainer() {
         -s -m 10 "http://portainer_portainer:9000/api/system/status" 2>/dev/null \
         | jq -r '.Version // empty' 2>/dev/null)
 
-    if [ -z "$versao_atual" ]; then
+    # Versão fora do padrão X.Y.Z conta como ilegível: versao_semver_maior
+    # diria "não é maior" e a fixa seria implantada — um rebaixamento se a
+    # versão em uso for, por exemplo, uma 2.46.0-rc1.
+    if [ -z "$versao_atual" ] || ! [[ "$versao_atual" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         local img_agent img_server
         img_agent=$(sudo docker service inspect portainer_agent --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)
         img_server=$(sudo docker service inspect portainer_portainer --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)

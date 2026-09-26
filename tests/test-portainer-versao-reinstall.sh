@@ -67,6 +67,7 @@ case "$1" in
     case "${FAKE_DOCKER_MODE:-}" in
       maior) echo '{"Version":"2.46.0"}' ;;
       menor) echo '{"Version":"2.40.0"}' ;;
+      naosemver) echo '{"Version":"2.46.0-rc1"}' ;;
       falha) : ;;
       *) : ;;
     esac
@@ -136,6 +137,18 @@ if [ "$saida" = "$esperado" ]; then
   ok "leitura falhou -> reusa a imagem completa (com tag) já em uso"
 else
   falha "leitura falhou: esperado '$esperado', obtido '$saida'"
+fi
+
+# --- Cenário 4: versão lida fora do padrão X.Y.Z -> conta como ILEGÍVEL ---
+# (reusa a imagem em uso). Tratar "2.46.0-rc1" como "não é maior" implantaria
+# a fixa 2.45.1 por cima de uma 2.46.0-rc1 — exatamente o rebaixamento que a
+# função existe para evitar.
+saida="$(rodar_cenario naosemver "portainer/agent:2.46.0-rc1" "portainer/portainer-ce:2.46.0-rc1")"
+esperado="IMAGEM_AGENT_PORTAINER=portainer/agent:2.46.0-rc1|IMAGEM_SERVER_PORTAINER=portainer/portainer-ce:2.46.0-rc1"
+if [ "$saida" = "$esperado" ]; then
+  ok "versão fora do padrão (2.46.0-rc1) -> ilegível, reusa a imagem em uso"
+else
+  falha "versão fora do padrão: esperado '$esperado', obtido '$saida'"
 fi
 
 [ "$falhas" -eq 0 ] || exit 1
