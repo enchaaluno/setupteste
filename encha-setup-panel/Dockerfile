@@ -37,6 +37,23 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./nod
 # Persistent data dir + cache dir (tmpfs mount-point para read_only: true)
 RUN mkdir -p /app/data /app/.next/cache && chown -R nextjs:nodejs /app/data /app/.next/cache
 
+# nftables + o script do serviço encha-guard (ciclo C4 — achado A1: portas
+# internas do Swarm expostas à Internet). Esta MESMA imagem é reaproveitada
+# pelo serviço Swarm `encha-guard` (criado no C5/C6, fora deste ciclo), só
+# que com User "0", Healthcheck NONE e Command diferentes via override no
+# spec do serviço — nunca mudar USER/HEALTHCHECK/CMD abaixo por causa disso,
+# o painel continua rodando como "nextjs" normalmente.
+RUN apk add --no-cache nftables
+COPY guard/encha-guard.sh /usr/local/bin/encha-guard
+# Dois passos (COPY + RUN chmod) em vez de "COPY --chmod": um build local
+# sem BuildKit pode não suportar a flag — mesmo padrão já usado no resto
+# deste arquivo (nada de atalho que dependa de um builder específico).
+RUN chmod 0755 /usr/local/bin/encha-guard
+
+# Usado por um ciclo futuro (C9) para decidir se uma instalação pode migrar
+# para segredos do Docker — não pula nenhuma lógica agora, só o rótulo.
+LABEL com.encha.painel.recursos="credenciais-arquivo guarda-swarm"
+
 USER nextjs
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
