@@ -1516,7 +1516,7 @@ renomear_admin_portainer_se_necessario() {
 
     local ok=false http
     for _ in 1 2 3 4 5; do
-        http=$(sudo docker run --rm --network "$rede" curlimages/curl:latest \
+        http=$(sudo docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
             -s -o /dev/null -w "%{http_code}" -X PUT \
             -H "Authorization: Bearer $token_admin" \
             -H "Content-Type: application/json" \
@@ -1532,7 +1532,7 @@ renomear_admin_portainer_se_necessario() {
     fi
 
     local novo_token
-    novo_token=$(sudo docker run --rm --network "$rede" curlimages/curl:latest \
+    novo_token=$(sudo docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
         -s -X POST http://portainer_portainer:9000/api/auth \
         -H "Content-Type: application/json" \
         -d "$(jq -nc --arg u "$alvo" --arg p "$senha" '{username:$u,password:$p}')" 2>/dev/null | jq -r .jwt)
@@ -3117,6 +3117,11 @@ ferramenta_traefik_e_portainer() {
     echo -e "$(t ferramenta_traefik_e_portainer_credenciais_bater)"
   fi
 
+  # Precisa vir ANTES do 'docker stack rm portainer' abaixo: numa
+  # reinstalação, lê a versão do Portainer que ainda está de pé para nunca
+  # rebaixar (ver o comentário de resolver_imagens_portainer).
+  resolver_imagens_portainer "$nome_rede_interna" "$PORTAINER_JA_INICIALIZADO"
+
   echo -e "$(t ferramenta_traefik_e_portainer_preparando)"
   # Remove apenas as STACKS antigas de traefik/portainer para um redeploy limpo.
   # NÃO faz purge do Docker nem 'rm -rf /var/lib/docker': volumes externos
@@ -3293,7 +3298,7 @@ EOL
 version: "3.7"
 services:
   agent:
-    image: portainer/agent:latest
+    image: ${IMAGEM_AGENT_PORTAINER}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -3325,7 +3330,7 @@ EOL
 version: "3.7"
 services:
   agent:
-    image: portainer/agent:latest
+    image: ${IMAGEM_AGENT_PORTAINER}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -3337,7 +3342,7 @@ services:
         constraints: [node.platform.os == linux]
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: ${IMAGEM_SERVER_PORTAINER}
     command: -H tcp://tasks.agent:9001 --tlsskipverify --admin-password-file /run/secrets/portainer_admin_password
     volumes:
       - portainer_data:/data
@@ -3388,7 +3393,7 @@ EOL
   echo -e "$(t ferramenta_traefik_e_portainer_confirmando_admin)"
   CONTA_CRIADA=false
   for i in $(seq 1 40); do
-    chk=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+    chk=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
       -s -o /dev/null -w "%{http_code}" http://portainer_portainer:9000/api/users/admin/check 2>/dev/null)
     [ "$chk" = "204" ] && { CONTA_CRIADA=true; break; }
     sleep 3
@@ -3399,7 +3404,7 @@ EOL
     echo -e "$(t ferramenta_traefik_e_portainer_admin_nao_confirmado)"
     sudo docker service update --force portainer_portainer >/dev/null 2>&1
     for i in $(seq 1 20); do
-      chk=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+      chk=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
         -s -o /dev/null -w "%{http_code}" http://portainer_portainer:9000/api/users/admin/check 2>/dev/null)
       [ "$chk" = "204" ] && { CONTA_CRIADA=true; break; }
       sleep 3
@@ -3411,7 +3416,7 @@ EOL
   CREDENCIAIS_APLICADAS=false
 
   if [ "$CONTA_CRIADA" = true ]; then
-    token=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+    token=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
       -s -X POST http://portainer_portainer:9000/api/auth \
       -H "Content-Type: application/json" \
       -d "$(jq -nc --arg p "$pass_portainer" '{username:"admin",password:$p}')" 2>/dev/null | jq -r .jwt)
@@ -23804,6 +23809,11 @@ instalar_traefik_e_portainer() {
     echo -e "$(t instalar_traefik_e_portainer_volume_existente)"
   fi
 
+  # Precisa vir ANTES do 'docker stack rm portainer' abaixo: numa
+  # reinstalação, lê a versão do Portainer que ainda está de pé para nunca
+  # rebaixar (ver o comentário de resolver_imagens_portainer).
+  resolver_imagens_portainer "$nome_rede_interna" "$PORTAINER_JA_INICIALIZADO"
+
   echo -e "$(t instalar_traefik_e_portainer_preparando_ambiente)"
 
   # Remove apenas as STACKS antigas de traefik/portainer para um redeploy limpo.
@@ -24034,7 +24044,7 @@ EOL
 version: "3.7"
 services:
   agent:
-    image: portainer/agent:latest
+    image: ${IMAGEM_AGENT_PORTAINER}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -24070,7 +24080,7 @@ EOL
 version: "3.7"
 services:
   agent:
-    image: portainer/agent:latest
+    image: ${IMAGEM_AGENT_PORTAINER}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -24082,7 +24092,7 @@ services:
         constraints: [node.platform.os == linux]
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: ${IMAGEM_SERVER_PORTAINER}
     command: -H tcp://tasks.agent:9001 --tlsskipverify --admin-password-file /run/secrets/portainer_admin_password
     volumes:
       - portainer_data:/data
@@ -24145,7 +24155,7 @@ EOL
   echo -e "$(t instalar_traefik_e_portainer_confirmando_admin)"
   CONTA_CRIADA=false
   for i in $(seq 1 40); do
-    chk=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+    chk=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
       -s -o /dev/null -w "%{http_code}" http://portainer_portainer:9000/api/users/admin/check 2>/dev/null)
     [ "$chk" = "204" ] && { CONTA_CRIADA=true; break; }
     sleep 3
@@ -24159,7 +24169,7 @@ EOL
     echo -e "$(t instalar_traefik_e_portainer_admin_nao_confirmado)"
     sudo docker service update --force portainer_portainer >/dev/null 2>&1
     for i in $(seq 1 20); do
-      chk=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+      chk=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
         -s -o /dev/null -w "%{http_code}" http://portainer_portainer:9000/api/users/admin/check 2>/dev/null)
       [ "$chk" = "204" ] && { CONTA_CRIADA=true; break; }
       sleep 3
@@ -24170,7 +24180,7 @@ EOL
 
   if [ "$CONTA_CRIADA" = true ]; then
     JSON_LOGIN=$(jq -n --arg p "$pass_portainer" '{username: "admin", password: $p}')
-    token=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+    token=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
       -s -X POST http://portainer_portainer:9000/api/auth \
       -H "Content-Type: application/json" \
       -d "$JSON_LOGIN" 2>/dev/null | jq -r .jwt)
@@ -26792,7 +26802,7 @@ deploy_stack_painel_via_portainer() {
     echo -e "$(t deploy_stack_painel_via_portainer_aguardando_api)"
     local pronto=false
     for _ in $(seq 1 20); do
-        code=$(docker run --rm --network "$rede" curlimages/curl:latest \
+        code=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
             -s -o /dev/null -w "%{http_code}" http://portainer_portainer:9000/api/system/status 2>/dev/null)
         [ "$code" = "200" ] && { pronto=true; break; }
         sleep 3
@@ -26803,7 +26813,7 @@ deploy_stack_painel_via_portainer() {
     fi
 
     local token
-    token=$(docker run --rm --network "$rede" curlimages/curl:latest \
+    token=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
         -s -X POST http://portainer_portainer:9000/api/auth \
         -H "Content-Type: application/json" \
         -d "$(jq -nc --arg u "$user_portainer" --arg p "$pass_portainer" '{username:$u,password:$p}')" 2>/dev/null | jq -r .jwt)
@@ -26813,7 +26823,7 @@ deploy_stack_painel_via_portainer() {
     fi
 
     local endpoint_id
-    endpoint_id=$(docker run --rm --network "$rede" curlimages/curl:latest \
+    endpoint_id=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
         -s -H "Authorization: Bearer $token" http://portainer_portainer:9000/api/endpoints 2>/dev/null | jq -r '.[0].Id')
     if [ -z "$endpoint_id" ] || [ "$endpoint_id" = "null" ]; then
         echo -e "$(t deploy_stack_painel_via_portainer_sem_endpoint)"
@@ -26821,7 +26831,7 @@ deploy_stack_painel_via_portainer() {
     fi
 
     local swarm_id
-    swarm_id=$(docker run --rm --network "$rede" curlimages/curl:latest \
+    swarm_id=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
         -s -H "Authorization: Bearer $token" "http://portainer_portainer:9000/api/endpoints/$endpoint_id/docker/swarm" 2>/dev/null | jq -r .ID)
     if [ -z "$swarm_id" ] || [ "$swarm_id" = "null" ]; then
         swarm_id=$(docker info --format '{{.Swarm.Cluster.ID}}')
@@ -26829,7 +26839,7 @@ deploy_stack_painel_via_portainer() {
 
     # Localiza a stack já gerenciada pelo Portainer (se houver) e seu Env atual.
     local stacks_json stack_id current_env_json
-    stacks_json=$(docker run --rm --network "$rede" curlimages/curl:latest \
+    stacks_json=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
         -s -H "Authorization: Bearer $token" http://portainer_portainer:9000/api/stacks 2>/dev/null)
     stack_id=$(echo "$stacks_json" | jq -r '.[] | select(.Name=="encha-panel") | .Id' 2>/dev/null | head -n1)
     if [ -n "$stack_id" ]; then
@@ -26883,12 +26893,12 @@ deploy_stack_painel_via_portainer() {
         local body
         body=$(jq -n --rawfile f "$stack_file" --argjson env "$env_json" \
             '{StackFileContent:$f, Env:$env, Prune:false, PullImage:true}')
-        http_code=$(docker run --rm --network "$rede" curlimages/curl:latest \
+        http_code=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
             -s -o "$resp" -w "%{http_code}" -X PUT \
             -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
             -d "$body" "http://portainer_portainer:9000/api/stacks/$stack_id?endpointId=$endpoint_id" 2>/dev/null)
     else
-        http_code=$(docker run --rm --network "$rede" -v "$stack_file":"$stack_file":ro curlimages/curl:latest \
+        http_code=$(docker run --rm --network "$rede" -v "$stack_file":"$stack_file":ro "${ENCHA_CURL_IMAGE}" \
             -s -o "$resp" -w "%{http_code}" -X POST \
             -H "Authorization: Bearer $token" \
             -F "Name=encha-panel" \
@@ -26899,14 +26909,14 @@ deploy_stack_painel_via_portainer() {
             http://portainer_portainer:9000/api/stacks/create/swarm/file 2>/dev/null)
         if [ "$http_code" = "409" ]; then
             echo -e "$(t deploy_stack_painel_via_portainer_409)"
-            stack_id=$(docker run --rm --network "$rede" curlimages/curl:latest \
+            stack_id=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
                 -s -H "Authorization: Bearer $token" http://portainer_portainer:9000/api/stacks 2>/dev/null \
                 | jq -r '.[] | select(.Name=="encha-panel") | .Id' | head -n1)
             if [ -n "$stack_id" ]; then
                 local body
                 body=$(jq -n --rawfile f "$stack_file" --argjson env "$env_json" \
                     '{StackFileContent:$f, Env:$env, Prune:false, PullImage:true}')
-                http_code=$(docker run --rm --network "$rede" curlimages/curl:latest \
+                http_code=$(docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
                     -s -o "$resp" -w "%{http_code}" -X PUT \
                     -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
                     -d "$body" "http://portainer_portainer:9000/api/stacks/$stack_id?endpointId=$endpoint_id" 2>/dev/null)

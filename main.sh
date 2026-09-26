@@ -1049,7 +1049,7 @@ coletar_inputs_so_painel() {
     # Valida de verdade contra o Portainer, para não gerar uma stack do
     # painel com credenciais de serviço erradas.
     echo -e "$(t coletar_so_painel_validando)"
-    resp=$(sudo docker run --rm --network "$nome_rede_interna" curlimages/curl:latest \
+    resp=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
         -s -o /dev/null -w "%{http_code}" -X POST http://portainer_portainer:9000/api/auth \
         -H "Content-Type: application/json" \
         -d "{\"username\":\"$user_portainer\",\"password\":\"$pass_portainer\"}" 2>/dev/null)
