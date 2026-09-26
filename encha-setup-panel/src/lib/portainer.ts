@@ -390,33 +390,29 @@ export async function getServiceExact(
   return services.find((s) => s.Spec?.Name === name) ?? null;
 }
 
-export type DockerNetwork = { Id: string; Name: string };
+export type DockerNetwork = { Id: string; Name: string; Scope?: string };
 
-// Lista redes do Docker Engine cujo nome CASA POR PREFIXO com `name` (mesmo
-// comportamento de filtro do Docker que já vale para `getServiceByName`) —
-// quem usa isto para achar uma rede EXATA (ex.: "host") tem que filtrar o
-// resultado por `Name === name`, nunca confiar no primeiro item.
-export async function listNetworksByName(
-  token: string,
-  endpointId: number,
-  name: string
-): Promise<DockerNetwork[]> {
-  const filters = encodeURIComponent(JSON.stringify({ name: [name] }));
-  return call<DockerNetwork[]>(`/api/endpoints/${endpointId}/docker/networks?filters=${filters}`, { token });
-}
-
-// Resolve o ID da rede `host` do node. Necessário porque um serviço JÁ
-// CRIADO devolve `Networks[].Target` como o ID da rede (o Docker Engine
-// resolve isso na leitura), nunca a string literal "host" usada no spec
-// desejado (achado do auditor do C5, nota 1 — ver `redeEhHost` em
-// src/lib/swarm-guard.ts) — sem resolver o ID primeiro, comparar o Target
-// lido contra a string "host" sempre acharia diferença, mesmo quando é a
-// mesma rede. `null` quando não deu pra resolver (ex.: filtro não achou
-// nada, ou a chamada falhou) — quem compara trata isso como "só a
-// comparação literal 'host' funciona".
+// Resolve o ID da rede `host` NO ESCOPO DO SWARM — o mesmo ID que o daemon
+// grava em `Spec.TaskTemplate.Networks[].Target` quando um serviço é criado
+// com `{ Target: "host" }` (`populateNetworkID`, daemon/cluster/networks.go:
+// o nome é trocado pelo ID da rede predefinida do Swarm, um ID do swarmkit
+// de 25 caracteres). NÃO é o ID da rede `host` local (64 hex) que
+// `docker network ls` e `GET /networks?filters={"name":["host"]}` devolvem
+// (a listagem filtra as redes predefinidas do Swarm em
+// `Cluster.GetNetworks`): os dois são objetos
+// diferentes (medido na encha-test, Docker 27.3.1: local
+// `7e9e1cd7…` vs. swarm `kaw3tshz…`), e comparar contra o local fazia o C6
+// achar "rede diferente" em TODA rodada e atualizar o serviço para sempre.
+// `GET /networks/host?scope=swarm` cai em `Cluster.GetNetwork`, que (ao
+// contrário da listagem) enxerga a rede predefinida. `null` quando não deu
+// pra resolver (erro, ou resposta que não é a rede host do Swarm) — quem
+// compara trata isso como "só a comparação literal 'host' funciona".
 export async function getHostNetworkId(token: string, endpointId: number): Promise<string | null> {
-  const redes = await listNetworksByName(token, endpointId, "host");
-  return redes.find((r) => r.Name === "host")?.Id ?? null;
+  const rede = await call<DockerNetwork>(`/api/endpoints/${endpointId}/docker/networks/host?scope=swarm`, {
+    token,
+  });
+  if (!rede || rede.Name !== "host" || rede.Scope !== "swarm" || !rede.Id) return null;
+  return rede.Id;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

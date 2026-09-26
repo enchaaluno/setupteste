@@ -209,6 +209,61 @@ describe("listNodes", () => {
   });
 });
 
+// Auditoria C6: um serviço criado com `{ Target: "host" }` grava no spec o
+// ID da rede `host` PREDEFINIDA DO SWARM (swarmkit, 25 chars), que é outro
+// objeto que a rede `host` local (64 hex) — e a listagem
+// `GET /networks?filters=...` só devolve a local (o daemon filtra as
+// predefinidas do Swarm). Respostas abaixo copiadas da encha-test (Docker
+// 27.3.1, API 1.47). O mock responde às DUAS rotas como o Docker real, então
+// voltar a resolver pela listagem devolve o ID local e o teste falha.
+describe("getHostNetworkId (auditoria C6 — ID da rede host no escopo do Swarm)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.doUnmock("undici");
+  });
+
+  const HOST_LOCAL = {
+    Name: "host",
+    Id: "7e9e1cd77ec77ec21782f2b73913128241dbaf6b58e1205cbb2400f305248e39",
+    Scope: "local",
+    Driver: "host",
+  };
+  const HOST_SWARM = {
+    Name: "host",
+    Id: "kaw3tshz1db9n30614rln6tij",
+    Scope: "swarm",
+    Driver: "host",
+    Labels: { "com.docker.swarm.predefined": "true" },
+  };
+
+  function fetchComoDocker(respostaInspect: unknown) {
+    return vi.fn(async (url: string) => {
+      const corpo = url.includes("/docker/networks?") ? [HOST_LOCAL] : respostaInspect;
+      return new Response(JSON.stringify(corpo), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+  }
+
+  it("devolve o ID da rede host do SWARM (o que o spec do serviço guarda), nunca o da rede host local", async () => {
+    const fetchMock = fetchComoDocker(HOST_SWARM);
+    const { getHostNetworkId } = await carregarPortainerComFetchGenerico(fetchMock);
+
+    expect(await getHostNetworkId("token", 1)).toBe(HOST_SWARM.Id);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain("/api/endpoints/1/docker/networks/host?scope=swarm");
+  });
+
+  it("resposta que não é a rede host do Swarm (ex.: daemon antigo ignorando scope) -> null", async () => {
+    const { getHostNetworkId } = await carregarPortainerComFetchGenerico(fetchComoDocker(HOST_LOCAL));
+    expect(await getHostNetworkId("token", 1)).toBeNull();
+  });
+});
+
 describe("createService / updateService", () => {
   beforeEach(() => {
     vi.resetModules();
