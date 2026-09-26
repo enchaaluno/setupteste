@@ -320,11 +320,17 @@ gerar_ruleset() {
 
 # Mesmo ruleset, com as listas de pares passadas explicitamente ("$1" IPv4,
 # "$2" IPv6, espaço-separadas e JÁ validadas). Com as duas vazias, é a versão
-# só com as regras de drop — a usada na falha fechada (aplicar_se_necessario).
+# sem os pares — a primeira falha fechada (aplicar_se_necessario). "$3" =
+# "sem_ssh" omite também o limite de SSH: é a versão MÍNIMA (só lo + drops do
+# Swarm), a última falha fechada — texto fixo, que nenhuma env var altera.
 montar_ruleset() {
   IPV4_VALIDOS="$1"
   IPV6_VALIDOS="$2"
-  coletar_portas_ssh
+  if [ "${3:-}" = "sem_ssh" ]; then
+    PORTAS_SSH_VALIDAS=""
+  else
+    coletar_portas_ssh
+  fi
 
   echo 'table inet encha_guard {}'
   echo 'delete table inet encha_guard'
@@ -464,14 +470,16 @@ aplicar_ruleset() {
   return 1
 }
 
-# 1 = a versão completa foi recusada pelo nft e a tabela aplicada é a SEM os
-# pares (falha fechada, ver aplicar_se_necessario).
+# 1 = a versão completa foi recusada pelo nft e a tabela aplicada é uma das
+# versões de falha fechada — sem os pares, ou a mínima (ver
+# aplicar_se_necessario).
 MODO_SEM_PARES=0
 
 # Compara a tabela aplicada agora com a que este processo deixou na última
 # aplicação e só chama `nft -f -` quando ela sumiu ou mudou (ou quando este
 # processo ainda não aplicou nada). "$1" = ruleset completo, "$2" = o mesmo
-# sem os pares; os dois calculados uma vez no início do loop — as env vars
+# sem os pares, "$3" = o mínimo (sem pares e sem o limite de SSH); os três
+# calculados uma vez no início do loop — as env vars
 # não mudam durante a vida do contêiner (mudar env de um serviço Swarm recria
 # a tarefa). Nunca deixa o script morrer por causa do nft — falha vira log e
 # o loop segue (o contêiner não pode crash-loop por causa disso).
@@ -479,12 +487,18 @@ MODO_SEM_PARES=0
 # FALHA FECHADA: se o nft recusar a transação completa (um elemento da
 # allowlist que o nft desta versão não aceita — um só derruba a transação
 # inteira), as portas não podem ficar abertas por causa da allowlist: aplica
-# a versão sem os pares (só lo + drops) e avisa. Nos ciclos seguintes, com a
-# tabela intacta, só CONFERE com `nft -c` (não aplica nada, contadores
-# intactos) se a versão completa já passa — e a aplica quando passar.
+# a versão sem os pares (lo + limite de SSH + drops) e avisa. Se nem ela
+# passar — o limite de SSH do C7 usa set dinâmico com "limit", que um kernel
+# antigo pode recusar, e sem esta terceira camada isso deixava o guarda sem
+# regra NENHUMA (as portas do Swarm abertas por causa de uma mitigação de
+# SSH) —, aplica a versão mínima (só lo + drops do Swarm, texto fixo). Nos
+# ciclos seguintes, com a tabela intacta, só CONFERE com `nft -c` (não aplica
+# nada, contadores intactos) se a versão completa já passa — e a aplica
+# quando passar.
 aplicar_se_necessario() {
   ruleset_completo="$1"
   ruleset_sem_pares="$2"
+  ruleset_minimo="$3"
 
   if ! command -v nft >/dev/null 2>&1; then
     log "comando 'nft' não encontrado no PATH — nada a fazer neste ciclo."
@@ -510,14 +524,23 @@ aplicar_se_necessario() {
   fi
   log "falha ao aplicar o ruleset via 'nft -f -': $ERRO_NFT"
 
-  if [ "$ruleset_sem_pares" = "$ruleset_completo" ]; then
+  if [ "$ruleset_sem_pares" != "$ruleset_completo" ]; then
+    if aplicar_ruleset "$ruleset_sem_pares"; then
+      MODO_SEM_PARES=1
+      log "ATENÇÃO: o nft recusou a allowlist (ENCHA_GUARD_PEERS/ENCHA_GUARD_PERMITIR) — regras de drop aplicadas SEM os pares (falha fechada). Corrija a lista; o guarda confere de novo a cada ciclo."
+      return 0
+    fi
+    log "falha ao aplicar até a versão sem os pares via 'nft -f -': $ERRO_NFT"
+  fi
+
+  if [ "$ruleset_minimo" = "$ruleset_sem_pares" ]; then
     return 0
   fi
-  if aplicar_ruleset "$ruleset_sem_pares"; then
+  if aplicar_ruleset "$ruleset_minimo"; then
     MODO_SEM_PARES=1
-    log "ATENÇÃO: o nft recusou a allowlist (ENCHA_GUARD_PEERS/ENCHA_GUARD_PERMITIR) — regras de drop aplicadas SEM os pares (falha fechada). Corrija a lista; o guarda confere de novo a cada ciclo."
+    log "ATENÇÃO: o nft recusou o limite de conexões SSH (ENCHA_GUARD_SSH_PORTAS, ou o kernel sem suporte a set dinâmico com limite) — aplicados SÓ os drops do Swarm, sem pares e sem limite de SSH (falha fechada). O guarda confere de novo a cada ciclo."
   else
-    log "falha ao aplicar até a versão sem os pares via 'nft -f -': $ERRO_NFT"
+    log "falha ao aplicar até a versão mínima (só os drops) via 'nft -f -': $ERRO_NFT"
   fi
   return 0
 }
@@ -538,15 +561,17 @@ loop_principal() {
   log "iniciando — checagem a cada ~60s. A tabela nunca é removida ao sair (regras vivem no kernel do host)."
   ruleset_completo_do_processo=""
   ruleset_sem_pares_do_processo=""
+  ruleset_minimo_do_processo=""
   if ! desativado_ativo; then
     ruleset_completo_do_processo="$(gerar_ruleset)"
     ruleset_sem_pares_do_processo="$(montar_ruleset "" "")"
+    ruleset_minimo_do_processo="$(montar_ruleset "" "" sem_ssh)"
   fi
   while :; do
     if desativado_ativo; then
       aplicar_desativado
     else
-      aplicar_se_necessario "$ruleset_completo_do_processo" "$ruleset_sem_pares_do_processo"
+      aplicar_se_necessario "$ruleset_completo_do_processo" "$ruleset_sem_pares_do_processo" "$ruleset_minimo_do_processo"
     fi
     dormir_intervalo
   done

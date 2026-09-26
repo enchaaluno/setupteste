@@ -885,6 +885,65 @@ else
   falha "loop: allowlist alterada por fora não foi restaurada ($aplicacoes aplicações) — a normalização escondeu demais"
 fi
 
+# 9i. Falha fechada com o limite de SSH (achado da auditoria C7): a versão
+# "sem pares" também leva o limite de SSH (set dinâmico com "limit" — um
+# kernel antigo pode recusar). Se o nft recusar essa regra, o guarda NÃO pode
+# ficar sem regra nenhuma (portas do Swarm abertas por causa de uma
+# mitigação de SSH): cai na versão mínima, só lo + drops, e avisa.
+dir_ssh_recusado="$TMP_TESTE/loop-ssh-recusado"
+mkdir -p "$dir_ssh_recusado"
+printf 'ssh_limite' > "$dir_ssh_recusado/recusar"
+(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
+  rodar_loop 1.4 "$dir_ssh_recusado"
+)
+if [ -f "$dir_ssh_recusado/tabela" ] && grep -qF 'tcp dport { 2377, 7946 } counter drop' "$dir_ssh_recusado/ultimo_stdin" 2>/dev/null \
+    && grep -qF 'udp dport { 4789, 7946 } counter drop' "$dir_ssh_recusado/ultimo_stdin" \
+    && ! grep -qF 'ssh_limite' "$dir_ssh_recusado/ultimo_stdin"; then
+  ok "falha fechada: limite de SSH recusado pelo nft (sem allowlist) -> drops do Swarm aplicados mesmo assim"
+else
+  falha "falha fechada: limite de SSH recusado pelo nft deixou o guarda sem regra nenhuma (portas do Swarm abertas)"
+fi
+if grep -qF 'sem limite de SSH (falha fechada)' "$dir_ssh_recusado/stderr" 2>/dev/null; then
+  ok "falha fechada: a queda para a versão mínima é avisada no log"
+else
+  falha "falha fechada: a queda para a versão mínima não foi avisada no log"
+fi
+aplicacoes="$(conta_chamadas "$dir_ssh_recusado" '-f -')"
+if [ "$aplicacoes" -eq 2 ]; then
+  ok "falha fechada: versão mínima não é reaplicada a cada ciclo (completa recusada + mínima = 2 aplicações)"
+else
+  falha "falha fechada: esperadas 2 aplicações (completa recusada + mínima), houve $aplicacoes"
+fi
+
+# ...com allowlist: completa recusada, sem pares (ainda com SSH) recusada,
+# mínima aplicada — 3 aplicações, e a allowlist recusada nunca "salva" nada.
+dir_ssh_recusado_pares="$TMP_TESTE/loop-ssh-recusado-pares"
+mkdir -p "$dir_ssh_recusado_pares"
+printf 'ssh_limite' > "$dir_ssh_recusado_pares/recusar"
+(
+  unset ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
+  ENCHA_GUARD_PEERS="10.0.0.5"
+  export ENCHA_GUARD_PEERS
+  rodar_loop 1.4 "$dir_ssh_recusado_pares"
+)
+aplicacoes="$(conta_chamadas "$dir_ssh_recusado_pares" '-f -')"
+if [ "$aplicacoes" -eq 3 ] && [ -f "$dir_ssh_recusado_pares/tabela" ] \
+    && grep -qF 'udp dport { 4789, 7946 } counter drop' "$dir_ssh_recusado_pares/ultimo_stdin" 2>/dev/null \
+    && ! grep -qF 'pares' "$dir_ssh_recusado_pares/ultimo_stdin"; then
+  ok "falha fechada: com allowlist, completa e sem-pares recusadas -> mínima aplicada (3 aplicações, sem reaplicar a cada ciclo)"
+else
+  falha "falha fechada: com allowlist e limite de SSH recusado, esperada a versão mínima em 3 aplicações, houve $aplicacoes"
+fi
+
+# E o caso do C4 continua: allowlist recusada, limite de SSH aceito -> a
+# versão sem pares MANTÉM o limite de SSH (não desce à mínima sem motivo).
+if grep -qF 'update @ssh_limite4' "$dir_fecha/ultimo_stdin" 2>/dev/null; then
+  ok "falha fechada: allowlist recusada mantém o limite de SSH na versão sem pares"
+else
+  falha "falha fechada: allowlist recusada derrubou também o limite de SSH (desceu à mínima sem motivo)"
+fi
+
 # 9g. Sintaxe real (nft -c), se disponível — mesmo guard de disponibilidade
 # e mesma função "validar_sintaxe" da seção 7 (definida só quando o "nft"
 # real existe e fala com o netlink).
