@@ -489,4 +489,36 @@ else
   ok "nenhuma string com cara de JWT (eyJ...) em secondary.sh"
 fi
 
+# ============================================================
+# Cenário 6: as DUAS funções duplicadas usam o helper — nenhuma delas volta a
+# autenticar por conta própria (era ali que "admin" estava fixo) nem grava
+# outra coisa que não "Token: aplicado". Sem isto, reverter uma das duas
+# para o bloco antigo passava em todos os cenários acima (auditoria C2).
+# ============================================================
+for fn in ferramenta_traefik_e_portainer instalar_traefik_e_portainer; do
+  corpo="$(extrair_funcao "$fn")"
+  if [ -z "$corpo" ]; then
+    falha "$fn: função não encontrada em secondary.sh"
+    continue
+  fi
+  chamadas=$(printf '%s\n' "$corpo" | grep -cE '^[[:space:]]*finalizar_admin_portainer "\$nome_rede_interna" "\$pass_portainer" "\$user_portainer_alvo" "\$PORTAINER_JA_INICIALIZADO"$')
+  if [ "$chamadas" -eq 1 ]; then
+    ok "$fn: chama finalizar_admin_portainer (rede, senha, alvo, já inicializado) uma vez"
+  else
+    falha "$fn: esperava 1 chamada a finalizar_admin_portainer com os 4 argumentos, achei $chamadas"
+  fi
+  if printf '%s\n' "$corpo" | grep -v '^[[:space:]]*#' | grep -q 'api/auth'; then
+    falha "$fn: autentica no Portainer por conta própria (api/auth) em vez de passar por finalizar_admin_portainer"
+  else
+    ok "$fn: nenhuma chamada própria a api/auth (login só via finalizar_admin_portainer)"
+  fi
+  if printf '%s\n' "$corpo" | grep -qE '^Username: \$USER_PORTAINER_FINAL$' \
+     && printf '%s\n' "$corpo" | grep -qE '^Token: aplicado$' \
+     && ! printf '%s\n' "$corpo" | grep -qE '^Token: .*\$'; then
+    ok "$fn: dados_portainer grava USER_PORTAINER_FINAL e 'Token: aplicado', sem interpolar token"
+  else
+    falha "$fn: heredoc de dados_portainer fora do esperado (Username: \$USER_PORTAINER_FINAL / Token: aplicado)"
+  fi
+done
+
 [ "$falhas" -eq 0 ] || exit 1
