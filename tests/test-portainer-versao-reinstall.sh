@@ -10,7 +10,7 @@
 # no PATH, e afirma qual imagem cada cenário decide implantar.
 # Roda com: bash tests/test-portainer-versao-reinstall.sh
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 falhas=0
 falha() { echo "❌ FALHOU: $1"; falhas=$((falhas + 1)); }
 ok() { echo "✅ $1"; }

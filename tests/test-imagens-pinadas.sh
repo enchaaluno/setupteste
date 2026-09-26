@@ -11,7 +11,7 @@
 #   3. traefik-portainer.ts usa a MESMA versão que secondary.sh.
 # Roda com: bash tests/test-imagens-pinadas.sh
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 falhas=0
 falha() { echo "❌ FALHOU: $1"; falhas=$((falhas + 1)); }
 ok() { echo "✅ $1"; }
