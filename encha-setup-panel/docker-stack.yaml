@@ -15,9 +15,22 @@ version: "3.7"
 #   - PANEL_IMAGE_TAG       tag da imagem do painel (ex: 0.1.0, latest)
 #   - PANEL_ADMIN_USER      usuário do admin local do painel
 #   - PANEL_ADMIN_PASSWORD  senha do admin local do painel (texto puro —
-#                           é o que permite reset via Portainer)
+#                           é o que permite reset via Portainer; SEMPRE
+#                           vence sobre PANEL_ADMIN_PASSWORD_FILE — ver
+#                           lerSegredo() em src/lib/security/segredo.ts)
 #   - PORTAINER_USER        credencial de serviço p/ o painel falar com o Portainer
-#   - PORTAINER_PASSWORD    idem
+#   - PORTAINER_PASSWORD    idem (mesma regra de precedência sobre
+#                           PORTAINER_PASSWORD_FILE)
+#   - PANEL_ADMIN_PASSWORD_FILE / PORTAINER_PASSWORD_FILE — Ciclo C9 (M3 do
+#     plano de segurança): caminho do Docker secret montado (sempre
+#     "/run/secrets/panel_admin_password" / "/run/secrets/portainer_password"
+#     quando a imagem entende _FILE — label com.encha.painel.recursos do C4;
+#     vazio numa imagem antiga, que ignora estas duas). Ver
+#     garantir_segredos_credenciais_painel() em secondary.sh.
+#   - PANEL_ADMIN_PASSWORD_SECRET_NAME / PORTAINER_PASSWORD_SECRET_NAME —
+#     qual secret versionado ("<base>_<epoch>") o mount abaixo aponta pra
+#     dentro de cada deploy; cai no secret "_bootstrap" (sempre presente,
+#     idempotente) quando ainda não houve nenhuma migração bem-sucedida.
 #
 # ENCHA_PANEL_NETWORK é a exceção: continua resolvida por envsubst antes do
 # deploy (aparece como chave de `networks:`, que a API do Portainer não
@@ -30,6 +43,10 @@ version: "3.7"
 #   3. Volume externo 'encha_panel_data' criado:
 #        docker volume create encha_panel_data
 #   4. Diretório /root/dados_vps presente no host (criado pelo instalador bash).
+#   5. Secrets 'panel_admin_password'/'portainer_password' (versionados,
+#      rotacionados a cada deploy) e seus "_bootstrap" fixos — ver
+#      garantir_segredos_credenciais_painel() em secondary.sh; nunca criados
+#      à mão.
 #
 # Deploy: ver deploy_stack_painel_via_portainer() em secondary.sh
 # (ferramenta_encha_panel). Não usar `docker stack deploy` para esta stack —
@@ -44,6 +61,12 @@ services:
       - source: encha_panel_master_key
         target: master_key
         mode: 0444
+      - source: panel_admin_password
+        target: panel_admin_password
+        mode: 0400
+      - source: portainer_password
+        target: portainer_password
+        mode: 0400
     volumes:
       - encha_panel_data:/app/data
       - /root/dados_vps:/app/vps-context:ro
@@ -66,6 +89,8 @@ services:
       - PANEL_ADMIN_PASSWORD=${PANEL_ADMIN_PASSWORD}
       - PORTAINER_USER=${PORTAINER_USER}
       - PORTAINER_PASSWORD=${PORTAINER_PASSWORD}
+      - PANEL_ADMIN_PASSWORD_FILE=${PANEL_ADMIN_PASSWORD_FILE}
+      - PORTAINER_PASSWORD_FILE=${PORTAINER_PASSWORD_FILE}
     read_only: true
     tmpfs:
       - /tmp
@@ -102,6 +127,12 @@ services:
 secrets:
   encha_panel_master_key:
     external: true
+  panel_admin_password:
+    external: true
+    name: ${PANEL_ADMIN_PASSWORD_SECRET_NAME:-panel_admin_password_bootstrap}
+  portainer_password:
+    external: true
+    name: ${PORTAINER_PASSWORD_SECRET_NAME:-portainer_password_bootstrap}
 
 volumes:
   encha_panel_data:
