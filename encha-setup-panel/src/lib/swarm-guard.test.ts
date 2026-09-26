@@ -146,6 +146,24 @@ describe("montarSpecGuarda", () => {
     };
     expect(montarSpecGuarda(args)).toEqual(montarSpecGuarda({ ...args }));
   });
+
+  it("determinismo: alterar um spec devolvido não contamina a próxima chamada (nenhum array compartilhado)", () => {
+    const primeiro = montarSpecGuarda(baseArgs);
+    const cs = primeiro.TaskTemplate.ContainerSpec;
+    cs.Command?.push("--render");
+    cs.Env?.push("X=1");
+    cs.CapabilityAdd?.push("CAP_SYS_ADMIN");
+    cs.CapabilityDrop?.pop();
+    cs.Healthcheck?.Test.pop();
+    primeiro.TaskTemplate.Networks?.push({ Target: "ingress" });
+    primeiro.TaskTemplate.Placement?.Constraints?.pop();
+    if (primeiro.Labels) primeiro.Labels["com.docker.stack.namespace"] = "x";
+
+    expect(montarSpecGuarda(baseArgs)).toStrictEqual(montarSpecGuarda(baseArgs));
+    expect(montarSpecGuarda(baseArgs).TaskTemplate.ContainerSpec.Command).toEqual(["/usr/local/bin/encha-guard"]);
+    expect(montarSpecGuarda(baseArgs).TaskTemplate.ContainerSpec.CapabilityAdd).toEqual(["CAP_NET_ADMIN"]);
+    expect(montarSpecGuarda(baseArgs).TaskTemplate.ContainerSpec.Healthcheck).toEqual({ Test: ["NONE"] });
+  });
 });
 
 describe("peersFromNodes", () => {

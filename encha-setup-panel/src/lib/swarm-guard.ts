@@ -10,7 +10,11 @@ import type { DockerNode, ServiceSpec } from "./portainer";
 // é o que permite ao C6 comparar "desejado" com "atual" sem falso positivo.
 
 export const GUARD_SERVICE_NAME = "encha-guard";
-export const GUARD_COMMAND = ["/usr/local/bin/encha-guard"];
+// Congelado, e sempre COPIADO para dentro do spec (nunca a mesma
+// referência): se o spec devolvido fosse alterado por quem chama (ex.: o C6
+// mesclando algo), a constante mudaria junto e todo spec seguinte sairia
+// diferente — quebrando o determinismo do qual a comparação do C6 depende.
+export const GUARD_COMMAND: readonly string[] = Object.freeze(["/usr/local/bin/encha-guard"]);
 
 export type MontarSpecGuardaArgs = {
   /**
@@ -81,7 +85,7 @@ export function montarSpecGuarda(args: MontarSpecGuardaArgs): ServiceSpec {
     TaskTemplate: {
       ContainerSpec: {
         Image: args.imagemPainel,
-        Command: GUARD_COMMAND,
+        Command: [...GUARD_COMMAND],
         User: "0",
         Env: env,
         CapabilityDrop: ["ALL"],
