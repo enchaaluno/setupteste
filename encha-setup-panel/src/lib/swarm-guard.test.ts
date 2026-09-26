@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { montarSpecGuarda, peersFromNodes, type MontarSpecGuardaArgs } from "./swarm-guard";
-import type { DockerNode } from "./portainer";
+import {
+  compararEnv,
+  compararNetworks,
+  especificacaoDesejada,
+  montarSpecGuarda,
+  peersFromNodes,
+  redeEhHost,
+  type MontarSpecGuardaArgs,
+} from "./swarm-guard";
+import type { DockerNode, DockerServiceFull } from "./portainer";
 
 // Cobre o builder puro do serviço Swarm `encha-guard` (ciclo C5 do plano de
 // segurança — achado A1) e a extração de endereços de nós. Sem rede: só
@@ -303,5 +311,154 @@ describe("peersFromNodes", () => {
   it("determinismo: mesma entrada produz a mesma saída", () => {
     const nodes = [no("10.0.0.5"), no("10.0.0.6")];
     expect(peersFromNodes(nodes)).toEqual(peersFromNodes(nodes.map((n) => ({ ...n }))));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Decisão "atual vs. desejado" do C6 — compararEnv/redeEhHost/
+// compararNetworks/especificacaoDesejada. Continua tudo puro: nenhum mock
+// de rede aqui (isso é guard-runtime.test.ts, que orquestra I/O).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("compararEnv", () => {
+  it("pares fora de ordem são considerados iguais", () => {
+    expect(
+      compararEnv(
+        ["ENCHA_GUARD_PEERS=10.0.0.5,10.0.0.6", "ENCHA_GUARD_PERMITIR=203.0.113.9"],
+        ["ENCHA_GUARD_PERMITIR=203.0.113.9", "ENCHA_GUARD_PEERS=10.0.0.5,10.0.0.6"]
+      )
+    ).toBe(true);
+  });
+
+  it("DESATIVADO=true e DESATIVADO=1 são equivalentes (em qualquer capitalização)", () => {
+    expect(compararEnv(["ENCHA_GUARD_DESATIVADO=true"], ["ENCHA_GUARD_DESATIVADO=1"])).toBe(true);
+    expect(compararEnv(["ENCHA_GUARD_DESATIVADO=TRUE"], ["ENCHA_GUARD_DESATIVADO=1"])).toBe(true);
+    expect(compararEnv(["ENCHA_GUARD_DESATIVADO=True"], ["ENCHA_GUARD_DESATIVADO=true"])).toBe(true);
+  });
+
+  it("um valor realmente diferente é diferente", () => {
+    expect(compararEnv(["ENCHA_GUARD_PEERS=10.0.0.5"], ["ENCHA_GUARD_PEERS=10.0.0.6"])).toBe(false);
+    expect(compararEnv(["ENCHA_GUARD_PERMITIR=1.2.3.4"], [])).toBe(false);
+    expect(compararEnv([], ["ENCHA_GUARD_PERMITIR=1.2.3.4"])).toBe(false);
+  });
+
+  it("dois arrays vazios são iguais", () => {
+    expect(compararEnv([], [])).toBe(true);
+  });
+
+  it("chave extra em qualquer lado (mesmo com o resto igual) é diferente", () => {
+    expect(compararEnv(["A=1", "B=2"], ["A=1"])).toBe(false);
+    expect(compararEnv(["A=1"], ["A=1", "B=2"])).toBe(false);
+  });
+});
+
+describe("redeEhHost / compararNetworks", () => {
+  it("string literal 'host' é host, com ou sem hostNetworkId resolvido", () => {
+    expect(redeEhHost("host", null)).toBe(true);
+    expect(redeEhHost("host", "net-abc")).toBe(true);
+  });
+
+  it("Target como ID de rede resolvido para host é tratado como igual à string 'host' desejada", () => {
+    expect(redeEhHost("net-abc", "net-abc")).toBe(true);
+    expect(compararNetworks([{ Target: "net-abc" }], [{ Target: "host" }], "net-abc")).toBe(true);
+  });
+
+  it("ID de rede que NÃO é o host resolvido é diferente", () => {
+    expect(redeEhHost("net-outra", "net-abc")).toBe(false);
+    expect(compararNetworks([{ Target: "net-outra" }], [{ Target: "host" }], "net-abc")).toBe(false);
+  });
+
+  it("hostNetworkId não resolvido (null) e Target não é a string literal 'host' -> diferente, nunca lança", () => {
+    expect(redeEhHost("net-abc", null)).toBe(false);
+    expect(compararNetworks([{ Target: "net-abc" }], [{ Target: "host" }], null)).toBe(false);
+  });
+
+  it("quantidade de redes diferente é diferente", () => {
+    expect(compararNetworks([], [{ Target: "host" }], null)).toBe(false);
+    expect(compararNetworks([{ Target: "host" }, { Target: "host" }], [{ Target: "host" }], null)).toBe(false);
+  });
+
+  it("Target undefined/ausente nunca é host", () => {
+    expect(redeEhHost(undefined, "net-abc")).toBe(false);
+  });
+});
+
+describe("especificacaoDesejada", () => {
+  const baseArgsDesejada = {
+    imagemPainel: "ghcr.io/enchaaluno/setup-panel:0.5.0@sha256:cafe1234",
+    versaoApp: "0.5.0",
+    peers: ["10.0.0.5"],
+  };
+
+  function servicoAtual(env: string[]): DockerServiceFull {
+    return {
+      ID: "svc-1",
+      Version: { Index: 1 },
+      Spec: { Name: "encha-guard", TaskTemplate: { ContainerSpec: { Image: "x", Env: env } } },
+    } as DockerServiceFull;
+  }
+
+  it("atual:null -> sem PERMITIR/DESATIVADO no spec (igual a montarSpecGuarda sem overrides)", () => {
+    const spec = especificacaoDesejada({ ...baseArgsDesejada, atual: null });
+    expect(spec.TaskTemplate.ContainerSpec.Env).toEqual(["ENCHA_GUARD_PEERS=10.0.0.5"]);
+  });
+
+  it("herda ENCHA_GUARD_PERMITIR do serviço atual", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_PERMITIR=203.0.113.9"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PERMITIR=203.0.113.9");
+  });
+
+  it("herda ENCHA_GUARD_DESATIVADO=1 do serviço atual", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=1"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_DESATIVADO=1");
+  });
+
+  it("preserva o TEXTO LITERAL de DESATIVADO=True do operador, sem normalizar para '1'", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=True"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_DESATIVADO=True");
+    expect(spec.TaskTemplate.ContainerSpec.Env).not.toContain("ENCHA_GUARD_DESATIVADO=1");
+  });
+
+  it("DESATIVADO com valor não reconhecido (nem true nem 1) no atual não entra no spec (mesma regra do script)", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=talvez"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env?.some((e) => e.startsWith("ENCHA_GUARD_DESATIVADO"))).toBe(false);
+  });
+
+  it("peers vem SEMPRE do argumento peers, nunca herdado do ENCHA_GUARD_PEERS do atual", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      peers: ["10.0.0.9"],
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=10.0.0.1,10.0.0.2"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PEERS=10.0.0.9");
+  });
+
+  it("atual sem nenhuma das duas variáveis -> spec sem PERMITIR/DESATIVADO", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=10.0.0.5"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Env?.some((e) => e.startsWith("ENCHA_GUARD_PERMITIR"))).toBe(false);
+    expect(spec.TaskTemplate.ContainerSpec.Env?.some((e) => e.startsWith("ENCHA_GUARD_DESATIVADO"))).toBe(false);
+  });
+
+  it("a imagem usada é sempre imagemPainel do argumento, mesmo herdando overrides do atual", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_PERMITIR=1.2.3.4"]),
+    });
+    expect(spec.TaskTemplate.ContainerSpec.Image).toBe(baseArgsDesejada.imagemPainel);
   });
 });

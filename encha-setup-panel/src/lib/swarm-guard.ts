@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { DockerNode, ServiceSpec } from "./portainer";
+import type { DockerNode, DockerServiceFull, NetworkAttachmentConfig, ServiceSpec } from "./portainer";
 
 // Builder PURO do spec do serviço Swarm `encha-guard` (ciclo C5 do plano de
 // segurança — achado A1). Só monta objetos: nenhuma chamada de rede, nenhum
@@ -186,4 +186,148 @@ export function peersFromNodes(nodes: DockerNode[]): string[] {
   // o mesmo IP — senão o C6, comparando o Env desejado com o atual, veria
   // "spec difere" sem nada ter mudado e recriaria a tarefa do guarda à toa.
   return Array.from(enderecos).sort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Decisão "atual vs. desejado" (ciclo C6) — a COLA que decide QUANDO
+// criar/atualizar o `encha-guard`. Continua tudo puro aqui: recebe o que já
+// foi lido da API (nenhuma chamada de rede), só compara/monta objetos. Quem
+// orquestra I/O de verdade (buscar o serviço, resolver a rede `host`,
+// chamar createService/updateService) é src/lib/guard-runtime.ts.
+// ─────────────────────────────────────────────────────────────────────────
+
+const CHAVE_PERMITIR = "ENCHA_GUARD_PERMITIR";
+const CHAVE_DESATIVADO = "ENCHA_GUARD_DESATIVADO";
+
+function valorDeEnv(env: string[] | undefined, chave: string): string | undefined {
+  const prefixo = `${chave}=`;
+  const linha = env?.find((e) => e.startsWith(prefixo));
+  return linha?.slice(prefixo.length);
+}
+
+// Mesmo conjunto que o script aceita como "ligado" (`desativado_ativo` em
+// guard/encha-guard.sh, C4): "1"/"true", em qualquer capitalização.
+// Qualquer outro valor (incluindo ausente) conta como desligado.
+function desativadoLigado(valor: string | undefined): boolean {
+  return valor !== undefined && /^(1|true)$/i.test(valor);
+}
+
+// Normaliza só o que precisa ser tratado como equivalente entre "atual" e
+// "desejado" (a grafia de ENCHA_GUARD_DESATIVADO) — nunca usada para
+// decidir o que ESCREVER (isso é `especificacaoDesejada`, que preserva o
+// texto literal do operador).
+function normalizarValorEnv(chave: string, valor: string): string {
+  if (chave === CHAVE_DESATIVADO) return desativadoLigado(valor) ? "1" : valor.toLowerCase();
+  return valor;
+}
+
+function envParaMapa(env: string[]): Map<string, string> {
+  const mapa = new Map<string, string>();
+  for (const linha of env) {
+    const separador = linha.indexOf("=");
+    if (separador === -1) continue; // defensivo — nunca deveria ocorrer num Env válido do Docker
+    const chave = linha.slice(0, separador);
+    const valor = linha.slice(separador + 1);
+    mapa.set(chave, normalizarValorEnv(chave, valor));
+  }
+  return mapa;
+}
+
+/**
+ * Compara dois arrays `Env` (formato `KEY=VALUE` do Docker) por CONJUNTO —
+ * a API pode devolver o array numa ordem diferente da que enviamos, então
+ * nunca compare por posição. `ENCHA_GUARD_DESATIVADO=true`/`=1`/`=TRUE`/...
+ * são tratados como equivalentes entre si (mesmo conjunto que o script
+ * aceita como "ligado" — ver `desativadoLigado` acima), então uma
+ * diferença só nesse detalhe de grafia nunca dispara um `updateService` à
+ * toa (achado do auditor do C5, nota 4).
+ */
+export function compararEnv(atual: string[], desejado: string[]): boolean {
+  const mapaAtual = envParaMapa(atual);
+  const mapaDesejado = envParaMapa(desejado);
+  if (mapaAtual.size !== mapaDesejado.size) return false;
+  for (const [chave, valor] of mapaDesejado) {
+    if (mapaAtual.get(chave) !== valor) return false;
+  }
+  return true;
+}
+
+/**
+ * Um serviço JÁ CRIADO devolve `Networks[].Target` como o ID da rede
+ * resolvido pelo Docker Engine, nunca a string literal "host" usada no
+ * spec desejado (achado do auditor do C5, nota 1). `hostNetworkId` é o ID
+ * resolvido pela API (ver `getHostNetworkId`, src/lib/portainer.ts) — pode
+ * ser `null` quando não deu pra resolver, e nesse caso só a comparação
+ * literal contra "host" ainda funciona (nunca lança, nunca finge certeza
+ * que não tem).
+ */
+export function redeEhHost(target: string | undefined, hostNetworkId: string | null): boolean {
+  if (!target) return false;
+  return target === "host" || (hostNetworkId !== null && target === hostNetworkId);
+}
+
+// Compara a lista `Networks` do TaskTemplate por posição (o spec do
+// `encha-guard` sempre tem exatamente uma entrada) usando `redeEhHost` para
+// tratar ID-resolvido e string-literal "host" como iguais.
+export function compararNetworks(
+  atual: NetworkAttachmentConfig[] | undefined,
+  desejado: NetworkAttachmentConfig[] | undefined,
+  hostNetworkId: string | null
+): boolean {
+  const a = atual ?? [];
+  const d = desejado ?? [];
+  if (a.length !== d.length) return false;
+  return a.every((rede, i) => redeEhHost(rede.Target, hostNetworkId) === redeEhHost(d[i]?.Target, hostNetworkId));
+}
+
+export type EspecificacaoDesejadaArgs = {
+  imagemPainel: string;
+  versaoApp: string;
+  peers: string[];
+  /**
+   * Serviço `encha-guard` já implantado, se houver — usado só para herdar
+   * `ENCHA_GUARD_PERMITIR`/`ENCHA_GUARD_DESATIVADO` do que já está lá.
+   * `null` quando o serviço ainda não existe (primeira criação): nesse
+   * caso a saída não tem nenhuma das duas variáveis, igual a
+   * `montarSpecGuarda` sem `permitirExtra`/`desativado`.
+   */
+  atual: DockerServiceFull | null;
+};
+
+/**
+ * Monta o spec desejado do `encha-guard` incorporando
+ * `ENCHA_GUARD_PERMITIR`/`ENCHA_GUARD_DESATIVADO` do serviço JÁ IMPLANTADO
+ * (se houver) em vez de sempre recalcular do zero — é o que impede o C6 de
+ * apagar um override que o operador configurou manualmente no Portainer
+ * (achado do auditor do C5, nota 4). `ENCHA_GUARD_PEERS`, ao contrário, vem
+ * SEMPRE do argumento `peers` (nunca herdado de `atual`) — é a lista que
+ * pode mudar sozinha quando o cluster muda.
+ *
+ * Preserva o texto EXATO que o operador escreveu (ex.: `DESATIVADO=True`
+ * continua `True`, nunca normalizado para `1`) — `montarSpecGuarda` só sabe
+ * emitir o literal fixo `"1"`, então aqui sobrescrevemos com o valor bruto
+ * de `atual` depois de montado. A equivalência semântica entre grafias
+ * (`true`/`1`/...) é responsabilidade só de `compararEnv`, nunca da
+ * escrita.
+ */
+export function especificacaoDesejada(args: EspecificacaoDesejadaArgs): ServiceSpec {
+  const envAtual = args.atual?.Spec.TaskTemplate?.ContainerSpec?.Env;
+  const permitirAtual = valorDeEnv(envAtual, CHAVE_PERMITIR);
+  const desativadoAtualBruto = valorDeEnv(envAtual, CHAVE_DESATIVADO);
+
+  const spec = montarSpecGuarda({
+    imagemPainel: args.imagemPainel,
+    versaoApp: args.versaoApp,
+    peers: args.peers,
+    permitirExtra: permitirAtual,
+    desativado: desativadoLigado(desativadoAtualBruto),
+  });
+
+  if (desativadoAtualBruto !== undefined && desativadoLigado(desativadoAtualBruto)) {
+    const env = spec.TaskTemplate.ContainerSpec.Env;
+    const idx = env?.findIndex((e) => e.startsWith(`${CHAVE_DESATIVADO}=`)) ?? -1;
+    if (env && idx !== -1) env[idx] = `${CHAVE_DESATIVADO}=${desativadoAtualBruto}`;
+  }
+
+  return spec;
 }
