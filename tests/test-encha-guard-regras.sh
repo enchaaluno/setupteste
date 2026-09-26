@@ -73,7 +73,7 @@ case "$*" in
       echo "Error: rejeitado pelo nft falso ($FAKE_NFT_REJEITAR)" >&2
       exit 1
     fi
-    awk '/^table inet encha_guard \{$/ { n++ } n >= 2' "$d/ultimo_stdin" \
+    awk '/^table inet encha_guard [{]$/ { n++ } n >= 1' "$d/ultimo_stdin" \
       | sed -e 's/^    /\t\t/' -e 's/^  /\t/' -e 's/priority -5;/priority filter - 5;/' > "$d/tabela"
     echo 0 > "$d/contador"
     exit 0
@@ -372,15 +372,23 @@ fi
 # --- 8. Loop principal contra o nft falso ----------------------------------
 
 # Roda o loop por "$1" segundos num diretório de estado novo ("$2"), manda
-# SIGTERM e espera até 3s pela saída. LOOP_SAIU=1 se saiu sozinho.
+# SIGTERM e espera até 3s pela saída. LOOP_SAIU=1 se saiu sozinho. Com "$3"
+# (segundos), apaga a "tabela" por fora nesse instante — simula alguém/algo
+# removendo a tabela do kernel — e segue até completar "$1".
 rodar_loop() {
-  local segundos="$1" dir="$2"
+  local segundos="$1" dir="$2" apagar_em="${3:-}"
   mkdir -p "$dir"
   : > "$dir/chamadas"
   # shellcheck disable=SC2119 # sem argumento de propósito: é o loop real
   FAKE_NFT_DIR="$dir" sob_teste 2>"$dir/stderr" &
   local pid=$!
-  "$REAL_SLEEP" "$segundos"
+  if [ -n "$apagar_em" ]; then
+    "$REAL_SLEEP" "$apagar_em"
+    rm -f "$dir/tabela"
+    "$REAL_SLEEP" "$(awk -v a="$segundos" -v b="$apagar_em" 'BEGIN { print a - b }')"
+  else
+    "$REAL_SLEEP" "$segundos"
+  fi
   kill -TERM "$pid" 2>/dev/null
   LOOP_SAIU=0
   for _ in $(seq 1 30); do
@@ -439,6 +447,41 @@ if [ "$(cat "$dir_term/saiu" 2>/dev/null)" = "1" ]; then
   ok "loop: SIGTERM encerra o processo em até 3s"
 else
   falha "loop: o processo não saiu em até 3s depois do SIGTERM"
+fi
+
+
+# 8c. Idempotência: com a tabela intacta, o loop NÃO reaplica a cada ciclo
+# (reaplicar zera os contadores de drop e enche o log a cada minuto). O nft
+# (falso e real) devolve a tabela em formato diferente do que foi aplicado,
+# com contadores que mudam e "# handle N" — a comparação tem que sobreviver
+# a isso. Em ~1,4s o loop dá ~7 voltas: tem que haver exatamente 1 aplicação.
+dir_idem="$TMP_TESTE/loop-idempotente"
+(
+  unset ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_PEERS="10.0.0.5,10.0.0.6"
+  ENCHA_GUARD_PERMITIR="2001:db8::1"
+  export ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR
+  rodar_loop 1.4 "$dir_idem"
+)
+aplicacoes="$(conta_chamadas "$dir_idem" '-f -')"
+if [ "$aplicacoes" -eq 1 ]; then
+  ok "loop: tabela intacta não é reaplicada (1 aplicação em ~7 ciclos)"
+else
+  falha "loop: tabela intacta reaplicada a cada ciclo ($aplicacoes aplicações em ~7 ciclos)"
+fi
+
+# 8d. Tabela apagada por fora no meio do caminho: volta no ciclo seguinte,
+# e só uma vez.
+dir_some="$TMP_TESTE/loop-tabela-some"
+(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  rodar_loop 1.6 "$dir_some" 0.7
+)
+aplicacoes="$(conta_chamadas "$dir_some" '-f -')"
+if [ "$aplicacoes" -eq 2 ] && [ -f "$dir_some/tabela" ]; then
+  ok "loop: tabela removida por fora é reaplicada (2 aplicações no total)"
+else
+  falha "loop: tabela removida por fora — esperadas 2 aplicações e a tabela de volta, houve $aplicacoes"
 fi
 
 echo ""

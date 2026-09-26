@@ -223,12 +223,29 @@ tabela_existe() {
   nft list table inet encha_guard >/dev/null 2>&1
 }
 
-# Remove os "# handle N" (mudam a cada aplicação, mesmo com o ruleset
-# semanticamente igual) e linhas vazias/espaço nas pontas, pra comparar
-# conteúdo e não texto cru.
+# Normaliza a LISTAGEM do nft (`nft list table ...`) para comparar conteúdo,
+# não texto cru: tira "# handle N" (mudam a cada aplicação), troca
+# "counter packets N bytes M" por "counter" (sobem a cada pacote descartado)
+# e descarta espaço no fim e linhas vazias.
 normalizar_ruleset() {
-  sed -E 's/#[[:space:]]*handle[[:space:]]+[0-9]+//g' | sed -E 's/[[:space:]]+$//' | grep -v '^[[:space:]]*$'
+  sed -E -e 's/#[[:space:]]*handle[[:space:]]+[0-9]+//g' \
+    -e 's/counter packets [0-9]+ bytes [0-9]+/counter/g' \
+    -e 's/[[:space:]]+$//' | grep -v '^[[:space:]]*$'
 }
+
+listar_tabela_normalizada() {
+  nft list table inet encha_guard 2>/dev/null | normalizar_ruleset
+}
+
+# Listagem normalizada da tabela logo DEPOIS da última aplicação bem-sucedida
+# deste processo. É contra ela — e nunca contra o texto que foi aplicado —
+# que a tabela atual é comparada: o nft reformata o que recebe (tabs, blocos
+# de set em várias linhas, "priority filter - 5", e o auto-merge funde
+# elementos: "10.0.0.5,10.0.0.6" volta como "10.0.0.5-10.0.0.6"), então o
+# texto de entrada NUNCA é igual à listagem, e compará-los reaplicava a
+# tabela a cada ciclo (zerando os contadores e logando a cada minuto).
+# Vazia = nada aplicado ainda por este processo -> aplica.
+ULTIMA_LISTAGEM=""
 
 # Desativado (ENCHA_GUARD_DESATIVADO=1/true): remove a tabela se existir e
 # não aplica nada enquanto a flag estiver ligada. Log só na transição (o
@@ -250,31 +267,35 @@ aplicar_desativado() {
   fi
 }
 
-# Gera o ruleset desejado, compara com o aplicado agora e só chama
-# `nft -f -` quando é diferente ou a tabela não existe. Nunca deixa o script
-# morrer por causa do nft — falha vira log e o loop segue (o contêiner não
-# pode crash-loop por causa disso).
+# Compara a tabela aplicada agora com a que este processo deixou na última
+# aplicação e só chama `nft -f -` quando ela sumiu ou mudou (ou quando este
+# processo ainda não aplicou nada). "$1" = ruleset desejado (texto do
+# `nft -f -`), calculado uma vez no início do loop — as env vars não mudam
+# durante a vida do contêiner (mudar env de um serviço Swarm recria a tarefa).
+# Nunca deixa o script morrer por causa do nft — falha vira log e o loop
+# segue (o contêiner não pode crash-loop por causa disso).
 aplicar_se_necessario() {
+  ruleset_desejado="$1"
+
   if ! command -v nft >/dev/null 2>&1; then
     log "comando 'nft' não encontrado no PATH — nada a fazer neste ciclo."
     return 0
   fi
 
-  ruleset_bruto="$(gerar_ruleset)"
-  desejado="$(printf '%s\n' "$ruleset_bruto" | normalizar_ruleset)"
-
-  if tabela_existe; then
-    atual="$(nft -a list table inet encha_guard 2>/dev/null | normalizar_ruleset)"
-    if [ "$desejado" = "$atual" ]; then
+  if [ -n "$ULTIMA_LISTAGEM" ] && tabela_existe; then
+    atual="$(listar_tabela_normalizada)"
+    if [ "$atual" = "$ULTIMA_LISTAGEM" ]; then
       return 0
     fi
   fi
 
-  saida="$(printf '%s\n' "$ruleset_bruto" | nft -f - 2>&1)"
+  saida="$(printf '%s\n' "$ruleset_desejado" | nft -f - 2>&1)"
   status=$?
   if [ "$status" -eq 0 ]; then
-    log "ruleset aplicado (tabela ausente ou diferente da desejada)."
+    ULTIMA_LISTAGEM="$(listar_tabela_normalizada)"
+    log "ruleset aplicado (tabela ausente, alterada ou primeira aplicação deste processo)."
   else
+    ULTIMA_LISTAGEM=""
     log "falha ao aplicar o ruleset via 'nft -f -': $saida"
   fi
   return 0
@@ -282,11 +303,15 @@ aplicar_se_necessario() {
 
 loop_principal() {
   log "iniciando — checagem a cada ~60s. A tabela nunca é removida ao sair (regras vivem no kernel do host)."
+  ruleset_do_processo=""
+  if ! desativado_ativo; then
+    ruleset_do_processo="$(gerar_ruleset)"
+  fi
   while :; do
     if desativado_ativo; then
       aplicar_desativado
     else
-      aplicar_se_necessario
+      aplicar_se_necessario "$ruleset_do_processo"
     fi
     dormir_intervalo
   done
