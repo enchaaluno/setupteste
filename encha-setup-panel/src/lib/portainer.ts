@@ -181,6 +181,24 @@ export async function getSwarm(token: string, endpointId: number): Promise<Swarm
   return call<SwarmInfo>(`/api/endpoints/${endpointId}/docker/swarm`, { token });
 }
 
+// Nó do Swarm, como a API do Docker Engine devolve em GET /nodes (via proxy
+// do Portainer). `Status.Addr` existe em todo nó (manager ou worker) e é só
+// o IP, sem porta — é o endereço que o Swarm usa para o próprio tráfego de
+// cluster (gossip/VXLAN), por isso é o candidato natural pra allowlist do
+// encha-guard (ver src/lib/swarm-guard.ts, `peersFromNodes`). `ManagerStatus`
+// só existe em nós manager e o `Addr` ali costuma vir como "IP:porta"
+// (porta de gestão do Swarm, 2377) — mantido aqui como alternativa/contexto
+// extra, não como fonte primária.
+export type DockerNode = {
+  ID: string;
+  Status: { Addr: string };
+  ManagerStatus?: { Addr: string; Leader?: boolean };
+};
+
+export async function listNodes(token: string, endpointId: number): Promise<DockerNode[]> {
+  return call<DockerNode[]>(`/api/endpoints/${endpointId}/docker/nodes`, { token });
+}
+
 export async function listStacks(token: string): Promise<Stack[]> {
   return call<Stack[]>("/api/stacks", { token });
 }
@@ -335,6 +353,123 @@ export async function getServiceByName(
   );
   // O filtro `name` do Docker é prefixo; casa exatamente pelo Spec.Name.
   return services.find((s) => s.Spec?.Name === name) ?? services[0] ?? null;
+}
+
+// Mesma busca de getServiceByName, mas SEM o fallback `?? services[0]`.
+// Existe por um bug real daquela função: o filtro `name` da API do Docker é
+// por PREFIXO, então buscar "encha-guard" quando só existe um serviço
+// "encha-guard-teste" devolve esse serviço na lista — e `getServiceByName`
+// cai nele via `?? services[0]` em vez de sinalizar ausência. Para um
+// algoritmo idempotente (ex.: o guard do C6, que decide "criar" vs
+// "atualizar" com base em existir ou não um serviço de nome EXATO), esse
+// fallback é perigoso: atualizaria um serviço errado pensando ser o
+// gerenciado. `getServiceByName` continua como está (usada hoje só onde o
+// fallback nunca importa, ex. `resolvePanelNodeConstraint` contra o nome
+// fixo `encha-panel_panel`) — este helper é adicional, não substitui aquele.
+export async function getServiceExact(
+  token: string,
+  endpointId: number,
+  name: string
+): Promise<DockerServiceFull | null> {
+  const filters = encodeURIComponent(JSON.stringify({ name: [name] }));
+  const services = await call<DockerServiceFull[]>(
+    `/api/endpoints/${endpointId}/docker/services?filters=${filters}`,
+    { token }
+  );
+  return services.find((s) => s.Spec?.Name === name) ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Spec completo de SERVIÇO Swarm de longa duração (ex.: `encha-guard`,
+// C5/C6) — superset do ContainerSpec/TaskTemplate usados por SwarmJobSpec
+// (jobs efêmeros de uma execução, ver mais abaixo). Reaproveita os mesmos
+// nomes de campo já usados ali (Image/Command/Args/Env/User/TTY/Labels/
+// Mounts, e o tipo SwarmJobMount) e acrescenta só o que job avulso nunca
+// precisou: capacidades Linux, filesystem somente-leitura, healthcheck
+// (para desativar o herdado da imagem), rede explícita, política de
+// restart de serviço de vida longa (Condition "any", com Delay) e limites
+// de recursos. Não duplica SwarmJobSpec — os dois convivem porque modelam
+// coisas diferentes (job de uma execução vs. serviço sempre-rodando).
+// ─────────────────────────────────────────────────────────────────────────
+
+export type ServiceContainerSpec = {
+  Image: string;
+  Command?: string[];
+  Args?: string[];
+  Env?: string[];
+  User?: string;
+  TTY?: boolean;
+  Labels?: Record<string, string>;
+  Mounts?: SwarmJobMount[];
+  CapabilityAdd?: string[];
+  CapabilityDrop?: string[];
+  ReadOnly?: boolean;
+  Healthcheck?: { Test: string[] };
+};
+
+export type NetworkAttachmentConfig = { Target: string };
+
+// `Delay`/`Window` em NANOSSEGUNDOS — é assim que a API do Docker Engine
+// modela toda duração em TaskSpec.RestartPolicy (mesma unidade usada em
+// `docker service inspect`, campo `RestartPolicy.Delay`), nunca como string
+// tipo "5s" (isso é só a notação da CLI `docker service create --restart-delay`,
+// que a CLI converte para nanossegundos antes de enviar à API).
+export type ServiceRestartPolicy = {
+  Condition: "none" | "any" | "on-failure";
+  Delay?: number;
+  MaxAttempts?: number;
+  Window?: number;
+};
+
+export type ServiceMode =
+  | { Global: Record<string, never> }
+  | { Replicated: { Replicas: number } }
+  | { ReplicatedJob: { MaxConcurrent: number; TotalCompletions: number } };
+
+export type ServiceSpec = {
+  Name: string;
+  Labels?: Record<string, string>;
+  Mode: ServiceMode;
+  TaskTemplate: {
+    ContainerSpec: ServiceContainerSpec;
+    Networks?: NetworkAttachmentConfig[];
+    RestartPolicy?: ServiceRestartPolicy;
+    Placement?: { Constraints?: string[] };
+    Resources?: { Limits?: { NanoCPUs?: number; MemoryBytes?: number } };
+  };
+};
+
+// Cria um serviço Swarm a partir de um spec completo (ex.: o `encha-guard`
+// montado por `montarSpecGuarda`, src/lib/swarm-guard.ts). Quem decide
+// QUANDO criar/atualizar é o C6 — este helper só faz a chamada.
+export async function createService(
+  token: string,
+  endpointId: number,
+  spec: ServiceSpec
+): Promise<{ ID: string }> {
+  return call<{ ID: string }>(`/api/endpoints/${endpointId}/docker/services/create`, {
+    method: "POST",
+    token,
+    body: spec,
+  });
+}
+
+// Atualiza um serviço Swarm existente com um spec completo. `version` é o
+// `Version.Index` lido do serviço ANTES desta chamada (ver DockerServiceFull)
+// — a API do Docker exige esse número pra detectar corrida com outra
+// atualização concorrente e recusa (409) se estiver desatualizado.
+export async function updateService(
+  token: string,
+  endpointId: number,
+  serviceId: string,
+  version: number,
+  spec: ServiceSpec
+): Promise<void> {
+  await call(`/api/endpoints/${endpointId}/docker/services/${serviceId}/update?version=${version}`, {
+    method: "POST",
+    token,
+    body: spec,
+  });
 }
 
 // Atualiza a imagem de um service preservando o restante do Spec (rolling update no Swarm).
