@@ -1,6 +1,18 @@
 import { z } from "zod";
 import { type StackDefinition, fqdn, slug, strongPassword, username, email } from "./types";
 
+// Versão fixa do Portainer (server + agent). Mantenha em sincronia com
+// PORTAINER_VERSION em secondary.sh (raiz do repo) — as duas funções
+// duplicadas de infra ali (ferramenta_traefik_e_portainer /
+// instalar_traefik_e_portainer) e este catálogo do painel precisam andar
+// juntos (ver tests/test-imagens-pinadas.sh, que confere isso).
+//
+// NUNCA voltar para "latest": era o que os dois serviços usavam até esta
+// versão — auditoria numa VPS de produção real (2026-09) confirmou que
+// resolvia para 2.45.1 no momento, mas ":latest" não é reprodutível (duas
+// instalações em datas diferentes acabam rodando builds diferentes).
+export const PORTAINER_VERSION = "2.45.1";
+
 const schema = z.object({
   url_portainer: fqdn,
   user_portainer: username,
@@ -121,7 +133,7 @@ services:
         - "traefik.http.routers.http-catchall.priority=1"
 
   portainer-agent:
-    image: portainer/agent:latest
+    image: portainer/agent:${PORTAINER_VERSION}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/volumes:/var/lib/docker/volumes
@@ -133,7 +145,7 @@ services:
         constraints: [node.platform.os == linux]
 
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:${PORTAINER_VERSION}
     command: -H tcp://tasks.portainer-agent:9001 --tlsskipverify
     volumes:
       - portainer_data:/data
