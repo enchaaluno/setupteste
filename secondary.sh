@@ -26941,20 +26941,38 @@ garantir_segredos_credenciais_painel() {
 
 # limpar_segredos_antigos_painel — remove versões anteriores do secret
 # "<base>_<epoch>" depois que uma versão NOVA ($2) foi aplicada com sucesso
-# (o chamador só invoca isto quando SEGREDO_PAINEL_CRIADO_AGORA=true e o
-# deploy da stack já confirmou 20x — nunca antes, senão uma stack que falhou
-# ficaria sem nenhuma versão válida). Nunca remove o bootstrap nem a versão
-# que acabou de ser aplicada. Um secret "em uso" por uma task antiga que
-# ainda não saiu recusa a remoção (Docker devolve erro) — ignorado de
-# propósito, best-effort: sobra pra próxima rodada de limpeza.
+# (o chamador só invoca isto quando SEGREDO_PAINEL_CRIADO_AGORA=true e o PUT/
+# POST da stack voltou 2xx — nunca antes, senão uma stack que falhou ficaria
+# sem nenhuma versão válida). Nunca remove o bootstrap nem a versão que
+# acabou de ser aplicada.
+#
+# Também nunca remove um secret que o serviço ($3, padrão encha-panel_panel)
+# ainda referencia no Spec OU no PreviousSpec (auditoria C9). O 2xx do
+# Portainer só quer dizer "spec novo gravado", não "tarefa nova no ar": o
+# serviço tem update_config.failure_action=rollback, e se a tarefa nova
+# falhar o Swarm volta ao PreviousSpec — que aponta para a versão ANTERIOR
+# do secret. O Docker só recusa "secret rm" de secret referenciado pelo Spec
+# atual, não pelo PreviousSpec: removida a anterior, o rollback "completa"
+# com um spec apontando para secret inexistente, e o próximo restart da
+# tarefa (reboot, crash) não sobe mais o painel. Medido no Portainer 2.45.1
+# real. Se o inspect falhar, não remove nada (best-effort: sobra pra próxima
+# rodada, nunca arrisca apagar o que o rollback precisa).
+#
+# Um secret ainda recusado pelo Docker (em uso) é ignorado de propósito —
+# sem 'set -e' neste script, o erro do rm não aborta nada.
 limpar_segredos_antigos_painel() {
-    local base="$1" manter="$2"
+    local base="$1" manter="$2" servico="${3:-encha-panel_panel}"
     local bootstrap="${base}_bootstrap"
+    local referenciados
+    if ! referenciados=$(docker service inspect "$servico" --format '{{range .Spec.TaskTemplate.ContainerSpec.Secrets}}{{println .SecretName}}{{end}}{{if .PreviousSpec}}{{range .PreviousSpec.TaskTemplate.ContainerSpec.Secrets}}{{println .SecretName}}{{end}}{{end}}' 2>/dev/null); then
+        return 0
+    fi
     local nome
     while IFS= read -r nome; do
         [ -z "$nome" ] && continue
         [ "$nome" = "$manter" ] && continue
         [ "$nome" = "$bootstrap" ] && continue
+        printf '%s\n' "$referenciados" | grep -qxF -- "$nome" && continue
         docker secret rm "$nome" >/dev/null 2>&1
     done < <(docker secret ls --filter "label=com.encha.segredo-base=${base}" --format '{{.Name}}' 2>/dev/null)
 }

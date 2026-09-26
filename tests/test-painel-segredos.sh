@@ -92,6 +92,15 @@ if [ "$sub" = "image" ] && [ "${2:-}" = "inspect" ]; then
     exit 0
 fi
 
+# 'service inspect': o que limpar_segredos_antigos_painel lê para nunca
+# apagar um secret que o Spec/PreviousSpec do serviço ainda referencia
+# (rollback do Swarm). FAKE_SERVICE_SECRETS = nomes, um por linha.
+if [ "$sub" = "service" ] && [ "${2:-}" = "inspect" ]; then
+    [ "${FAKE_SERVICE_INSPECT_FALHA:-false}" = true ] && exit 1
+    [ -n "${FAKE_SERVICE_SECRETS:-}" ] && printf '%s\n' "$FAKE_SERVICE_SECRETS"
+    exit 0
+fi
+
 if [ "$sub" = "secret" ]; then
     case "${2:-}" in
       inspect)
@@ -237,6 +246,7 @@ rodar_deploy() {
            FAKE_CURRENT_ENV_JSON FAKE_CREATE_HTTP FAKE_PUT_HTTP \
            FAKE_SECRET_CREATE_FALHA FAKE_SECRETS_FILE FAKE_SECRETS_LABELS_FILE \
            FAKE_SECRETS_CONTEUDO_DIR CAPTURED_ENV_FILE \
+           FAKE_SERVICE_SECRETS FAKE_SERVICE_INSPECT_FALHA \
            url_painel nome_rede_interna user_portainer pass_portainer
     # user_painel/pass_painel ficam de fora do 'export' de propósito em
     # alguns cenários (unset no chamador) — exportar uma var unset não a
@@ -265,6 +275,8 @@ novo_cenario() {
   FAKE_CREATE_HTTP="201"
   FAKE_PUT_HTTP="200"
   FAKE_SECRET_CREATE_FALHA="false"
+  FAKE_SERVICE_SECRETS=""
+  FAKE_SERVICE_INSPECT_FALHA="false"
   unset user_painel pass_painel
 }
 
@@ -544,6 +556,62 @@ if grep -qF "deploy_stack_painel_via_portainer_sem_admin" "$SAIDA_STDOUT"; then
   ok "sem admin nenhum: mensagem certa (chave de erro sem_admin)"
 else
   falha "sem admin nenhum: não avisou com a mensagem esperada: $(cat "$SAIDA_STDOUT")"
+fi
+
+# ============================================================
+# Cenário 7 (auditoria C9): a limpeza NUNCA apaga a versão que o serviço
+# ainda referencia no PreviousSpec. O 2xx do Portainer só grava o spec novo;
+# com failure_action=rollback, se a tarefa nova cair o Swarm volta ao
+# PreviousSpec — e o Docker deixa remover um secret referenciado só ali
+# (medido no Portainer 2.45.1 real). Versões mais velhas, sem referência,
+# continuam sendo removidas.
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="credenciais-arquivo"
+FAKE_STACK_EXISTS=true
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""},{"name":"PANEL_ADMIN_PASSWORD_SECRET_NAME","value":"panel_admin_password_ANTERIOR"}]'
+for n in panel_admin_password_ANTERIOR panel_admin_password_VELHA; do
+  echo "$n" >> "$FAKE_SECRETS_FILE"
+  echo "$n com.encha.segredo-base=panel_admin_password" >> "$FAKE_SECRETS_LABELS_FILE"
+done
+# Depois do PUT, o PreviousSpec do serviço aponta para a versão ANTERIOR.
+FAKE_SERVICE_SECRETS="encha_panel_master_key
+panel_admin_password_ANTERIOR
+portainer_password_bootstrap"
+user_painel="admin"; pass_painel="NovaSenha456"
+
+saida="$(rodar_deploy "0.3.5")"
+[ "$saida" = "RC=0" ] || falha "previousSpec: esperado RC=0, obtido '$saida' — saída: $(cat "$SAIDA_STDOUT")"
+if grep -qxF "panel_admin_password_ANTERIOR" "$FAKE_SECRETS_FILE"; then
+  ok "previousSpec: a versão que o rollback do Swarm usaria (ANTERIOR) NÃO foi removida"
+else
+  falha "previousSpec: removeu panel_admin_password_ANTERIOR, referenciada pelo PreviousSpec — um rollback deixaria o painel apontando pra secret inexistente"
+fi
+if grep -qxF "panel_admin_password_VELHA" "$FAKE_SECRETS_FILE"; then
+  falha "previousSpec: a versão VELHA (sem referência nenhuma) devia ter sido removida: $(cat "$FAKE_SECRETS_FILE")"
+else
+  ok "previousSpec: a versão VELHA, sem referência, foi removida"
+fi
+
+# ============================================================
+# Cenário 8 (auditoria C9): 'docker service inspect' falhou -> não sabe o
+# que o rollback precisa, então não remove NADA (sobra pra próxima rodada).
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="credenciais-arquivo"
+FAKE_STACK_EXISTS=true
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""},{"name":"PANEL_ADMIN_PASSWORD_SECRET_NAME","value":"panel_admin_password_ANTERIOR"}]'
+echo "panel_admin_password_ANTERIOR" >> "$FAKE_SECRETS_FILE"
+echo "panel_admin_password_ANTERIOR com.encha.segredo-base=panel_admin_password" >> "$FAKE_SECRETS_LABELS_FILE"
+FAKE_SERVICE_INSPECT_FALHA=true
+user_painel="admin"; pass_painel="NovaSenha789"
+
+saida="$(rodar_deploy "0.3.5")"
+[ "$saida" = "RC=0" ] || falha "inspect falhou: esperado RC=0 (limpeza é best-effort), obtido '$saida'"
+if grep -qxF "panel_admin_password_ANTERIOR" "$FAKE_SECRETS_FILE"; then
+  ok "inspect do serviço falhou: nenhuma versão removida (não arrisca apagar o que o rollback precisa)"
+else
+  falha "inspect do serviço falhou: removeu panel_admin_password_ANTERIOR mesmo sem saber se o serviço ainda a referencia"
 fi
 
 [ "$falhas" -eq 0 ] || exit 1
