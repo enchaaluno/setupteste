@@ -14,6 +14,7 @@ import {
 import {
   compararEnv,
   compararNetworks,
+  desativadoNaoReconhecido,
   especificacaoDesejada,
   GUARD_SERVICE_NAME,
   peersFromNodes,
@@ -121,6 +122,15 @@ export async function garantirGuardaSwarmOuLanca(token: string, endpointId: numb
     peers,
     atual,
   });
+
+  const desativadoIgnorado = desativadoNaoReconhecido(atual);
+  if (desativadoIgnorado !== undefined) {
+    console.warn(
+      `[guard] ${GUARD_SERVICE_NAME}: ENCHA_GUARD_DESATIVADO="${desativadoIgnorado}" não é um valor que desliga o ` +
+        `guarda (só 1, true, TRUE ou True) — o guarda continua ATIVO. O valor é mantido como está; corrija-o no ` +
+        `Portainer se a intenção era desligar.`
+    );
+  }
 
   if (!atual) {
     await criarGuarda(token, endpointId, desejado);

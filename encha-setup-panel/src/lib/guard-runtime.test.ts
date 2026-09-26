@@ -196,6 +196,41 @@ describe("garantirGuardaSwarm", () => {
     expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PERMITIR=203.0.113.9");
   });
 
+  // Auditoria C6: DESATIVADO com valor que o script não reconhece ("sim").
+  // Antes: o desejado omitia a variável -> Env diferente -> updateService
+  // apagava a configuração do operador. Agora: preservada, compara igual,
+  // NADA é chamado, e o log avisa que o guarda continua ativo.
+  it("DESATIVADO=sim (não reconhecido) com o resto igual -> nada chamado, valor intacto, aviso no log", async () => {
+    const avisoMock = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { createServiceMock, updateServiceMock } = await setupMocks({
+      guardAtual: fakeGuardServiceIdentico({ env: ["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=sim"] }),
+    });
+    const { garantirGuardaSwarm } = await import("./guard-runtime");
+
+    await garantirGuardaSwarm("tok", 1);
+
+    expect(createServiceMock).not.toHaveBeenCalled();
+    expect(updateServiceMock).not.toHaveBeenCalled();
+    expect(avisoMock).toHaveBeenCalledWith(expect.stringContaining('ENCHA_GUARD_DESATIVADO="sim"'));
+  });
+
+  it("DESATIVADO=sim + imagem nova -> o update mantém DESATIVADO=sim literal", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { updateServiceMock } = await setupMocks({
+      guardAtual: fakeGuardServiceIdentico({
+        image: "imagem-velha@sha256:x",
+        env: ["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=sim"],
+      }),
+    });
+    const { garantirGuardaSwarm } = await import("./guard-runtime");
+
+    await garantirGuardaSwarm("tok", 1);
+
+    expect(updateServiceMock).toHaveBeenCalledTimes(1);
+    const spec = updateServiceMock.mock.calls[0][4] as ServiceSpec;
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_DESATIVADO=sim");
+  });
+
   it("409 do createService (criado em paralelo) é tratado sem lançar", async () => {
     const avisoMock = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { PortainerError } = await import("./portainer");

@@ -199,17 +199,36 @@ export function peersFromNodes(nodes: DockerNode[]): string[] {
 const CHAVE_PERMITIR = "ENCHA_GUARD_PERMITIR";
 const CHAVE_DESATIVADO = "ENCHA_GUARD_DESATIVADO";
 
+// Valor EFETIVO de `chave` num Env do Docker: com a chave repetida, vale a
+// ÚLTIMA ocorrência (o daemon monta o ambiente do container com
+// ReplaceOrAppendEnvValues, em que a entrada posterior substitui a
+// anterior) — a mesma regra de `envParaMapa`, para a herança e a
+// comparação nunca enxergarem valores diferentes do mesmo Env.
 function valorDeEnv(env: string[] | undefined, chave: string): string | undefined {
   const prefixo = `${chave}=`;
-  const linha = env?.find((e) => e.startsWith(prefixo));
+  const linha = env?.findLast((e) => e.startsWith(prefixo));
   return linha?.slice(prefixo.length);
 }
 
-// Mesmo conjunto que o script aceita como "ligado" (`desativado_ativo` em
-// guard/encha-guard.sh, C4): "1"/"true", em qualquer capitalização.
-// Qualquer outro valor (incluindo ausente) conta como desligado.
+// EXATAMENTE o conjunto que o script aceita como "ligado"
+// (`desativado_ativo` em guard/encha-guard.sh, C4): 1 | true | TRUE | True.
+// Não é "true em qualquer capitalização" — "tRuE" o script trata como
+// desligado, e aqui também. Qualquer outro valor (incluindo ausente) conta
+// como desligado.
 function desativadoLigado(valor: string | undefined): boolean {
-  return valor !== undefined && /^(1|true)$/i.test(valor);
+  return valor !== undefined && /^(1|true|TRUE|True)$/.test(valor);
+}
+
+/**
+ * Valor de `ENCHA_GUARD_DESATIVADO` do serviço implantado quando ele está
+ * presente mas NÃO desliga o guarda (ex.: "sim", "yes", "0") — `undefined`
+ * quando ausente ou reconhecido. Serve só para o C6 avisar no log que o
+ * operador escreveu algo que o script ignora (o guarda continua ATIVO); o
+ * valor em si é preservado tal e qual por `especificacaoDesejada`.
+ */
+export function desativadoNaoReconhecido(atual: DockerServiceFull | null): string | undefined {
+  const valor = valorDeEnv(atual?.Spec.TaskTemplate?.ContainerSpec?.Env, CHAVE_DESATIVADO);
+  return valor !== undefined && !desativadoLigado(valor) ? valor : undefined;
 }
 
 // Normaliza só o que precisa ser tratado como equivalente entre "atual" e
@@ -310,31 +329,32 @@ export type EspecificacaoDesejadaArgs = {
  * SEMPRE do argumento `peers` (nunca herdado de `atual`) — é a lista que
  * pode mudar sozinha quando o cluster muda.
  *
- * Preserva o texto EXATO que o operador escreveu (ex.: `DESATIVADO=True`
- * continua `True`, nunca normalizado para `1`) — `montarSpecGuarda` só sabe
- * emitir o literal fixo `"1"`, então aqui sobrescrevemos com o valor bruto
- * de `atual` depois de montado. A equivalência semântica entre grafias
- * (`true`/`1`/...) é responsabilidade só de `compararEnv`, nunca da
- * escrita.
+ * As duas variáveis do operador são copiadas com o TEXTO EXATO que estiver
+ * lá, QUALQUER que seja o valor (auditoria C6): `DESATIVADO=True` continua
+ * `True`; `DESATIVADO=sim` (que o script NÃO reconhece — o guarda segue
+ * ativo) continua `sim`, em vez de ser apagado na próxima atualização;
+ * `PERMITIR=` vazia continua presente. O painel nunca reinterpreta nem
+ * "corrige" o que o operador escreveu — quem decide o efeito é só o
+ * script; o C6 apenas avisa no log (`desativadoNaoReconhecido`). Como o
+ * desejado copia o valor literal do atual, a comparação converge na hora:
+ * nenhum valor, reconhecido ou não, provoca update em toda rodada.
  */
 export function especificacaoDesejada(args: EspecificacaoDesejadaArgs): ServiceSpec {
   const envAtual = args.atual?.Spec.TaskTemplate?.ContainerSpec?.Env;
   const permitirAtual = valorDeEnv(envAtual, CHAVE_PERMITIR);
-  const desativadoAtualBruto = valorDeEnv(envAtual, CHAVE_DESATIVADO);
+  const desativadoAtual = valorDeEnv(envAtual, CHAVE_DESATIVADO);
 
   const spec = montarSpecGuarda({
     imagemPainel: args.imagemPainel,
     versaoApp: args.versaoApp,
     peers: args.peers,
-    permitirExtra: permitirAtual,
-    desativado: desativadoLigado(desativadoAtualBruto),
   });
 
-  if (desativadoAtualBruto !== undefined && desativadoLigado(desativadoAtualBruto)) {
-    const env = spec.TaskTemplate.ContainerSpec.Env;
-    const idx = env?.findIndex((e) => e.startsWith(`${CHAVE_DESATIVADO}=`)) ?? -1;
-    if (env && idx !== -1) env[idx] = `${CHAVE_DESATIVADO}=${desativadoAtualBruto}`;
-  }
+  // Mesma ordem que montarSpecGuarda usaria: PEERS, PERMITIR, DESATIVADO.
+  const env = [...(spec.TaskTemplate.ContainerSpec.Env ?? [])];
+  if (permitirAtual !== undefined) env.push(`${CHAVE_PERMITIR}=${permitirAtual}`);
+  if (desativadoAtual !== undefined) env.push(`${CHAVE_DESATIVADO}=${desativadoAtual}`);
+  spec.TaskTemplate.ContainerSpec.Env = env;
 
   return spec;
 }

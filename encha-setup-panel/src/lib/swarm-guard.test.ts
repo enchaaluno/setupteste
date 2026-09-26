@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compararEnv,
   compararNetworks,
+  desativadoNaoReconhecido,
   especificacaoDesejada,
   montarSpecGuarda,
   peersFromNodes,
@@ -330,7 +331,7 @@ describe("compararEnv", () => {
     ).toBe(true);
   });
 
-  it("DESATIVADO=true e DESATIVADO=1 são equivalentes (em qualquer capitalização)", () => {
+  it("DESATIVADO=true/TRUE/True e DESATIVADO=1 são equivalentes (o conjunto exato do script)", () => {
     expect(compararEnv(["ENCHA_GUARD_DESATIVADO=true"], ["ENCHA_GUARD_DESATIVADO=1"])).toBe(true);
     expect(compararEnv(["ENCHA_GUARD_DESATIVADO=TRUE"], ["ENCHA_GUARD_DESATIVADO=1"])).toBe(true);
     expect(compararEnv(["ENCHA_GUARD_DESATIVADO=True"], ["ENCHA_GUARD_DESATIVADO=true"])).toBe(true);
@@ -433,12 +434,56 @@ describe("especificacaoDesejada", () => {
     expect(spec.TaskTemplate.ContainerSpec.Env).not.toContain("ENCHA_GUARD_DESATIVADO=1");
   });
 
-  it("DESATIVADO com valor não reconhecido (nem true nem 1) no atual não entra no spec (mesma regra do script)", () => {
+  // Auditoria C6: o valor do operador é preservado tal e qual, reconhecido
+  // ou não — antes "talvez"/"sim" era APAGADO no próximo update (o painel
+  // reescrevendo a configuração manual do operador).
+  it("DESATIVADO com valor não reconhecido pelo script é PRESERVADO literal (nunca apagado)", () => {
+    for (const valor of ["talvez", "sim", "0", "tRuE", ""]) {
+      const spec = especificacaoDesejada({
+        ...baseArgsDesejada,
+        atual: servicoAtual(["ENCHA_GUARD_PEERS=", `ENCHA_GUARD_DESATIVADO=${valor}`]),
+      });
+      const env = spec.TaskTemplate.ContainerSpec.Env ?? [];
+      expect(env.filter((e) => e.startsWith("ENCHA_GUARD_DESATIVADO="))).toEqual([`ENCHA_GUARD_DESATIVADO=${valor}`]);
+    }
+  });
+
+  it("PERMITIR vazia é preservada (não some no próximo update)", () => {
     const spec = especificacaoDesejada({
       ...baseArgsDesejada,
-      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=talvez"]),
+      atual: servicoAtual(["ENCHA_GUARD_PEERS=", "ENCHA_GUARD_PERMITIR="]),
     });
-    expect(spec.TaskTemplate.ContainerSpec.Env?.some((e) => e.startsWith("ENCHA_GUARD_DESATIVADO"))).toBe(false);
+    expect(spec.TaskTemplate.ContainerSpec.Env).toContain("ENCHA_GUARD_PERMITIR=");
+  });
+
+  it("com a chave repetida no Env do atual, herda a ÚLTIMA ocorrência (a que o Docker aplica)", () => {
+    const spec = especificacaoDesejada({
+      ...baseArgsDesejada,
+      atual: servicoAtual(["ENCHA_GUARD_DESATIVADO=1", "ENCHA_GUARD_PEERS=", "ENCHA_GUARD_DESATIVADO=0"]),
+    });
+    const env = spec.TaskTemplate.ContainerSpec.Env ?? [];
+    expect(env.filter((e) => e.startsWith("ENCHA_GUARD_DESATIVADO="))).toEqual(["ENCHA_GUARD_DESATIVADO=0"]);
+  });
+
+  // Convergência: para QUALQUER valor do operador, o desejado bate com o
+  // atual na comparação — nenhum valor provoca update em toda rodada.
+  it("desejado herdado do atual sempre compara igual ao Env atual (converge, sem update perpétuo)", () => {
+    for (const valor of ["1", "True", "sim", "0", "tRuE", ""]) {
+      const envAtual = ["ENCHA_GUARD_PEERS=10.0.0.5", "ENCHA_GUARD_PERMITIR=203.0.113.9", `ENCHA_GUARD_DESATIVADO=${valor}`];
+      const spec = especificacaoDesejada({ ...baseArgsDesejada, atual: servicoAtual(envAtual) });
+      expect(compararEnv(envAtual, spec.TaskTemplate.ContainerSpec.Env ?? [])).toBe(true);
+    }
+  });
+
+  it("desativadoNaoReconhecido: só aponta valor presente que o script NÃO trata como ligado", () => {
+    expect(desativadoNaoReconhecido(null)).toBeUndefined();
+    expect(desativadoNaoReconhecido(servicoAtual(["ENCHA_GUARD_PEERS="]))).toBeUndefined();
+    for (const ligado of ["1", "true", "TRUE", "True"]) {
+      expect(desativadoNaoReconhecido(servicoAtual([`ENCHA_GUARD_DESATIVADO=${ligado}`]))).toBeUndefined();
+    }
+    for (const ignorado of ["sim", "0", "tRuE", "yes"]) {
+      expect(desativadoNaoReconhecido(servicoAtual([`ENCHA_GUARD_DESATIVADO=${ignorado}`]))).toBe(ignorado);
+    }
   });
 
   it("peers vem SEMPRE do argumento peers, nunca herdado do ENCHA_GUARD_PEERS do atual", () => {
