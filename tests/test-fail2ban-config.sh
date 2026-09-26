@@ -438,6 +438,49 @@ for idioma in PT EN ES; do
 done
 
 # ============================================================
+# 8c. Onde a proteção dispara sozinha (auditoria C10): UMA chamada
+#     automática, no main.sh, no ponto em que os dois fluxos de instalação
+#     (infra completa e só painel) convergem — depois do painel instalado e
+#     antes do resumo final. No secondary.sh, só a opção 96 do menu e o
+#     dispatcher `proteger-ssh` — nunca dentro das funções de infra
+#     (ferramenta_traefik_e_portainer/instalar_traefik_e_portainer), que a
+#     opção 02 do menu roda numa reinstalação.
+# ============================================================
+chamadas() {
+  # Linhas que CHAMAM a função (a palavra solta, sem "_" nem "(" depois — a
+  # definição, as chaves MSG_*[instalar_protecao_ssh_*] e t(...) ficam de
+  # fora), ignorando comentários.
+  grep -nE '(^|[^_[:alnum:]])instalar_protecao_ssh([^_[:alnum:](]|$)' "$1" \
+    | grep -vE '^[0-9]+:[[:space:]]*#'
+}
+chamadas_main="$(chamadas main.sh)"
+n_main="$(printf '%s\n' "$chamadas_main" | grep -c .)"
+ln_chamada="$(printf '%s\n' "$chamadas_main" | grep -E '^[0-9]+:if instalar_protecao_ssh; then$' | cut -d: -f1)"
+ln_painel="$(grep -nE '^if ! ferramenta_encha_panel; then$' main.sh | cut -d: -f1)"
+ln_resumo="$(grep -nE '^mostrar_resumo_final$' main.sh | cut -d: -f1)"
+if [ "$n_main" -eq 1 ] && [ -n "$ln_chamada" ] && [ -n "$ln_painel" ] && [ -n "$ln_resumo" ] \
+   && [ "$ln_chamada" -gt "$ln_painel" ] && [ "$ln_chamada" -lt "$ln_resumo" ]; then
+  ok "main.sh: uma chamada automática, no nível de cima, entre ferramenta_encha_panel e mostrar_resumo_final"
+else
+  falha "main.sh: chamada automática fora do ponto de convergência (chamadas: $n_main; linha $ln_chamada; painel $ln_painel; resumo $ln_resumo)"
+fi
+
+chamadas_sec="$(chamadas secondary.sh)"
+n_sec="$(printf '%s\n' "$chamadas_sec" | grep -c .)"
+if [ "$n_sec" -eq 2 ]; then
+  ok "secondary.sh: só a opção 96 e o dispatcher chamam instalar_protecao_ssh"
+else
+  falha "secondary.sh: $n_sec chamadas de instalar_protecao_ssh (esperado 2: opção 96 + dispatcher) — $(printf '%s' "$chamadas_sec" | tr '\n' ';')"
+fi
+for fn_infra in ferramenta_traefik_e_portainer instalar_traefik_e_portainer ferramenta_encha_panel; do
+  if extrair_funcao "$fn_infra" | grep -qE '(^|[^_[:alnum:]])instalar_protecao_ssh([^_[:alnum:](]|$)'; then
+    falha "$fn_infra chama instalar_protecao_ssh — dispararia numa reinstalação pelo menu"
+  else
+    ok "$fn_infra não chama instalar_protecao_ssh"
+  fi
+done
+
+# ============================================================
 # 9. Se disponível no ambiente, validação com o fail2ban DE VERDADE (fora
 #    do PATH falso). Nunca falha o teste por ausência — mas, quando roda,
 #    precisa provar alguma coisa (auditoria C10: a versão anterior rodava
