@@ -246,6 +246,15 @@ coletar_enderecos() {
 # nft, então a ausência total de pares nunca deve gerar um set vazio.
 gerar_ruleset() {
   coletar_enderecos
+  montar_ruleset "$IPV4_VALIDOS" "$IPV6_VALIDOS"
+}
+
+# Mesmo ruleset, com as listas de pares passadas explicitamente ("$1" IPv4,
+# "$2" IPv6, espaço-separadas e JÁ validadas). Com as duas vazias, é a versão
+# só com as regras de drop — a usada na falha fechada (aplicar_se_necessario).
+montar_ruleset() {
+  IPV4_VALIDOS="$1"
+  IPV6_VALIDOS="$2"
 
   echo 'table inet encha_guard {}'
   echo 'delete table inet encha_guard'
@@ -334,15 +343,39 @@ aplicar_desativado() {
   fi
 }
 
+# Aplica "$1" via `nft -f -` (transação atômica). Sucesso: guarda a listagem
+# resultante em ULTIMA_LISTAGEM. Falha: limpa ULTIMA_LISTAGEM e deixa a saída
+# do nft em ERRO_NFT.
+aplicar_ruleset() {
+  if ERRO_NFT="$(printf '%s\n' "$1" | nft -f - 2>&1)"; then
+    ULTIMA_LISTAGEM="$(listar_tabela_normalizada)"
+    return 0
+  fi
+  ULTIMA_LISTAGEM=""
+  return 1
+}
+
+# 1 = a versão completa foi recusada pelo nft e a tabela aplicada é a SEM os
+# pares (falha fechada, ver aplicar_se_necessario).
+MODO_SEM_PARES=0
+
 # Compara a tabela aplicada agora com a que este processo deixou na última
 # aplicação e só chama `nft -f -` quando ela sumiu ou mudou (ou quando este
-# processo ainda não aplicou nada). "$1" = ruleset desejado (texto do
-# `nft -f -`), calculado uma vez no início do loop — as env vars não mudam
-# durante a vida do contêiner (mudar env de um serviço Swarm recria a tarefa).
-# Nunca deixa o script morrer por causa do nft — falha vira log e o loop
-# segue (o contêiner não pode crash-loop por causa disso).
+# processo ainda não aplicou nada). "$1" = ruleset completo, "$2" = o mesmo
+# sem os pares; os dois calculados uma vez no início do loop — as env vars
+# não mudam durante a vida do contêiner (mudar env de um serviço Swarm recria
+# a tarefa). Nunca deixa o script morrer por causa do nft — falha vira log e
+# o loop segue (o contêiner não pode crash-loop por causa disso).
+#
+# FALHA FECHADA: se o nft recusar a transação completa (um elemento da
+# allowlist que o nft desta versão não aceita — um só derruba a transação
+# inteira), as portas não podem ficar abertas por causa da allowlist: aplica
+# a versão sem os pares (só lo + drops) e avisa. Nos ciclos seguintes, com a
+# tabela intacta, só CONFERE com `nft -c` (não aplica nada, contadores
+# intactos) se a versão completa já passa — e a aplica quando passar.
 aplicar_se_necessario() {
-  ruleset_desejado="$1"
+  ruleset_completo="$1"
+  ruleset_sem_pares="$2"
 
   if ! command -v nft >/dev/null 2>&1; then
     log "comando 'nft' não encontrado no PATH — nada a fazer neste ciclo."
@@ -352,33 +385,47 @@ aplicar_se_necessario() {
   if [ -n "$ULTIMA_LISTAGEM" ] && tabela_existe; then
     atual="$(listar_tabela_normalizada)"
     if [ "$atual" = "$ULTIMA_LISTAGEM" ]; then
-      return 0
+      if [ "$MODO_SEM_PARES" -eq 0 ]; then
+        return 0
+      fi
+      if ! printf '%s\n' "$ruleset_completo" | nft -c -f - >/dev/null 2>&1; then
+        return 0
+      fi
     fi
   fi
 
-  saida="$(printf '%s\n' "$ruleset_desejado" | nft -f - 2>&1)"
-  status=$?
-  if [ "$status" -eq 0 ]; then
-    ULTIMA_LISTAGEM="$(listar_tabela_normalizada)"
+  if aplicar_ruleset "$ruleset_completo"; then
+    MODO_SEM_PARES=0
     log "ruleset aplicado (tabela ausente, alterada ou primeira aplicação deste processo)."
+    return 0
+  fi
+  log "falha ao aplicar o ruleset via 'nft -f -': $ERRO_NFT"
+
+  if [ "$ruleset_sem_pares" = "$ruleset_completo" ]; then
+    return 0
+  fi
+  if aplicar_ruleset "$ruleset_sem_pares"; then
+    MODO_SEM_PARES=1
+    log "ATENÇÃO: o nft recusou a allowlist (ENCHA_GUARD_PEERS/ENCHA_GUARD_PERMITIR) — regras de drop aplicadas SEM os pares (falha fechada). Corrija a lista; o guarda confere de novo a cada ciclo."
   else
-    ULTIMA_LISTAGEM=""
-    log "falha ao aplicar o ruleset via 'nft -f -': $saida"
+    log "falha ao aplicar até a versão sem os pares via 'nft -f -': $ERRO_NFT"
   fi
   return 0
 }
 
 loop_principal() {
   log "iniciando — checagem a cada ~60s. A tabela nunca é removida ao sair (regras vivem no kernel do host)."
-  ruleset_do_processo=""
+  ruleset_completo_do_processo=""
+  ruleset_sem_pares_do_processo=""
   if ! desativado_ativo; then
-    ruleset_do_processo="$(gerar_ruleset)"
+    ruleset_completo_do_processo="$(gerar_ruleset)"
+    ruleset_sem_pares_do_processo="$(montar_ruleset "" "")"
   fi
   while :; do
     if desativado_ativo; then
       aplicar_desativado
     else
-      aplicar_se_necessario "$ruleset_do_processo"
+      aplicar_se_necessario "$ruleset_completo_do_processo" "$ruleset_sem_pares_do_processo"
     fi
     dormir_intervalo
   done

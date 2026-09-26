@@ -67,10 +67,21 @@ cat > "$FAKEBIN/nft" <<'FAKE'
 d="${FAKE_NFT_DIR:?FAKE_NFT_DIR não definido}"
 echo "$*" >> "$d/chamadas"
 case "$*" in
+  "-c -f -")
+    cat > "$d/ultimo_check"
+    if [ -s "$d/recusar" ] && grep -qF "$(cat "$d/recusar")" "$d/ultimo_check"; then
+      echo "Error: rejeitado pelo nft falso" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
   "-f -")
     cat > "$d/ultimo_stdin"
-    if [ -n "${FAKE_NFT_REJEITAR:-}" ] && grep -qF "$FAKE_NFT_REJEITAR" "$d/ultimo_stdin"; then
-      echo "Error: rejeitado pelo nft falso ($FAKE_NFT_REJEITAR)" >&2
+    # "$d/recusar", se existir, tem um trecho: ruleset que o contém é recusado
+    # (simula o nft rejeitando a transação inteira por causa de um elemento).
+    if [ -s "$d/recusar" ] && grep -qF "$(cat "$d/recusar")" "$d/ultimo_stdin"; then
+      rm -f "$d/ultimo_stdin"
+      echo "Error: rejeitado pelo nft falso" >&2
       exit 1
     fi
     awk '/^table inet encha_guard [{]$/ { n++ } n >= 1' "$d/ultimo_stdin" \
@@ -457,10 +468,11 @@ fi
 
 # Roda o loop por "$1" segundos num diretório de estado novo ("$2"), manda
 # SIGTERM e espera até 3s pela saída. LOOP_SAIU=1 se saiu sozinho. Com "$3"
-# (segundos), apaga a "tabela" por fora nesse instante — simula alguém/algo
-# removendo a tabela do kernel — e segue até completar "$1".
+# (segundos), apaga por fora, nesse instante, o arquivo "$4" do estado do nft
+# falso (padrão: "tabela" — simula alguém removendo a tabela do kernel; ou
+# "recusar" — o nft deixa de recusar a transação) e segue até completar "$1".
 rodar_loop() {
-  local segundos="$1" dir="$2" apagar_em="${3:-}"
+  local segundos="$1" dir="$2" apagar_em="${3:-}" apagar_o_que="${4:-tabela}"
   mkdir -p "$dir"
   : > "$dir/chamadas"
   # shellcheck disable=SC2119 # sem argumento de propósito: é o loop real
@@ -468,7 +480,7 @@ rodar_loop() {
   local pid=$!
   if [ -n "$apagar_em" ]; then
     "$REAL_SLEEP" "$apagar_em"
-    rm -f "$dir/tabela"
+    rm -f "${dir:?}/$apagar_o_que"
     "$REAL_SLEEP" "$(awk -v a="$segundos" -v b="$apagar_em" 'BEGIN { print a - b }')"
   else
     "$REAL_SLEEP" "$segundos"
@@ -566,6 +578,57 @@ if [ "$aplicacoes" -eq 2 ] && [ -f "$dir_some/tabela" ]; then
   ok "loop: tabela removida por fora é reaplicada (2 aplicações no total)"
 else
   falha "loop: tabela removida por fora — esperadas 2 aplicações e a tabela de volta, houve $aplicacoes"
+fi
+
+
+# 8e. Falha fechada: se o nft recusar a transação com a allowlist (versão
+# nova do nft mais estrita, elemento que escapou do validador), as portas
+# NÃO podem ficar abertas — o guarda aplica as regras de drop sem os pares,
+# avisa no log e, nos ciclos seguintes, só CONFERE (nft -c) se a versão
+# completa já passa, sem reaplicar nada (contadores intactos).
+dir_fecha="$TMP_TESTE/loop-falha-fechada"
+mkdir -p "$dir_fecha"
+printf 'pares6' > "$dir_fecha/recusar"
+(
+  unset ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_PEERS="10.0.0.5"
+  ENCHA_GUARD_PERMITIR="2001:db8::1"
+  export ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR
+  rodar_loop 1.4 "$dir_fecha"
+)
+if [ -f "$dir_fecha/tabela" ] && grep -qF 'udp dport { 4789, 7946 } counter drop' "$dir_fecha/ultimo_stdin" 2>/dev/null \
+    && ! grep -qF 'pares' "$dir_fecha/ultimo_stdin"; then
+  ok "falha fechada: allowlist recusada pelo nft -> drops aplicados sem os pares"
+else
+  falha "falha fechada: allowlist recusada pelo nft deixou o guarda sem regra nenhuma (portas abertas)"
+fi
+if grep -qF '(falha fechada)' "$dir_fecha/stderr" 2>/dev/null; then
+  ok "falha fechada: o modo degradado é avisado no log"
+else
+  falha "falha fechada: o modo degradado não foi avisado no log"
+fi
+aplicacoes="$(conta_chamadas "$dir_fecha" '-f -')"
+if [ "$aplicacoes" -eq 2 ]; then
+  ok "falha fechada: não reaplica a cada ciclo (completa recusada + sem pares = 2 aplicações)"
+else
+  falha "falha fechada: esperadas 2 aplicações (completa recusada + sem pares), houve $aplicacoes"
+fi
+
+# 8f. ...e quando a versão completa volta a passar (falha transitória), o
+# guarda a aplica sozinho, sem esperar reinício do contêiner.
+dir_volta="$TMP_TESTE/loop-falha-transitoria"
+mkdir -p "$dir_volta"
+printf 'pares4' > "$dir_volta/recusar"
+(
+  unset ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_PEERS="10.0.0.5"
+  export ENCHA_GUARD_PEERS
+  rodar_loop 1.6 "$dir_volta" 0.7 recusar
+)
+if grep -qF '@pares4 accept' "$dir_volta/ultimo_stdin" 2>/dev/null && [ -f "$dir_volta/tabela" ]; then
+  ok "falha fechada: quando o nft volta a aceitar, a versão completa (com pares) é aplicada"
+else
+  falha "falha fechada: a versão completa não voltou depois que o nft passou a aceitar"
 fi
 
 echo ""
