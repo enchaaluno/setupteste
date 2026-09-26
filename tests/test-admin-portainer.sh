@@ -316,12 +316,24 @@ printf 'USER=carlosadm\nPASS=%s\n' "$SENHA" > "$FAKE_STATE_FILE"
 FAKE_RENAME_HTTP=200
 OUT="$(mktemp)"
 # Operador pede um usuário NOVO nesta reinstalação ("novoadm"); o real
-# admin ainda está como "carlosadm" (da instalação anterior).
+# admin ainda está como "carlosadm" (da instalação anterior). Reinstalação
+# NUNCA renomeia (auditoria C2): o PORTAINER_USER da stack do painel ainda é
+# "carlosadm", e a opção 2 do menu não regrava o painel.
 saida="$(rodar_cenario "$DV" "novoadm" "$SENHA" "true" "$OUT")"
-if [ "$saida" = "USER_PORTAINER_FINAL=novoadm|CREDENCIAIS_APLICADAS=true" ]; then
-  ok "reinstalação (salvo != alvo novo): autentica com o nome salvo e renomeia pro novo alvo"
+if [ "$saida" = "USER_PORTAINER_FINAL=carlosadm|CREDENCIAIS_APLICADAS=true" ]; then
+  ok "reinstalação (salvo != alvo novo): autentica com o nome salvo e o mantém"
 else
-  falha "reinstalação (salvo != alvo novo): esperado sucesso com novoadm, obtido '$saida'"
+  falha "reinstalação (salvo != alvo novo): esperado sucesso mantendo carlosadm, obtido '$saida'"
+fi
+if grep -q "api/users/1" "$FAKE_LOG"; then
+  falha "reinstalação (salvo != alvo novo): tentou renomear o admin preservado: $(cat "$FAKE_LOG")"
+else
+  ok "reinstalação (salvo != alvo novo): nenhuma tentativa de renomear o admin preservado"
+fi
+if grep -qF "usuário: carlosadm)" "$OUT"; then
+  ok "reinstalação (salvo != alvo novo): mensagem final cita o usuário mantido"
+else
+  falha "reinstalação (salvo != alvo novo): mensagem final não cita carlosadm: $(cat "$OUT")"
 fi
 tentativas_login=$(candidatos_tentados)
 if [ "$tentativas_login" -eq 2 ]; then
@@ -334,7 +346,7 @@ rm -rf "$DV" "$FAKE_STATE_FILE" "$OUT"
 # ============================================================
 # Cenário 3a: reinstalação — SÓ "admin" funciona (nunca foi renomeado),
 # dados_portainer salvo tem o fallback "Criar manualmente." (ignorado como
-# candidato) — renomeação bem-sucedida nesta tentativa
+# candidato) — mantém "admin", sem renomear (reinstalação preserva o admin)
 # ============================================================
 DV="$(mktemp -d)"
 cat > "$DV/dados_portainer" <<EOF
@@ -347,10 +359,15 @@ printf 'USER=admin\nPASS=%s\n' "$SENHA" > "$FAKE_STATE_FILE"
 FAKE_RENAME_HTTP=200
 OUT="$(mktemp)"
 saida="$(rodar_cenario "$DV" "carlosadm" "$SENHA" "true" "$OUT")"
-if [ "$saida" = "USER_PORTAINER_FINAL=carlosadm|CREDENCIAIS_APLICADAS=true" ]; then
-  ok "reinstalação (só admin, renomeação ok): autentica com admin e renomeia pro alvo"
+if [ "$saida" = "USER_PORTAINER_FINAL=admin|CREDENCIAIS_APLICADAS=true" ]; then
+  ok "reinstalação (só admin): autentica com admin e mantém admin"
 else
-  falha "reinstalação (só admin, renomeação ok): esperado sucesso com carlosadm, obtido '$saida'"
+  falha "reinstalação (só admin): esperado sucesso mantendo admin, obtido '$saida'"
+fi
+if grep -q "api/users/1" "$FAKE_LOG"; then
+  falha "reinstalação (só admin): tentou renomear o admin preservado: $(cat "$FAKE_LOG")"
+else
+  ok "reinstalação (só admin): nenhuma tentativa de renomear o admin preservado"
 fi
 tentativas_login=$(candidatos_tentados)
 if [ "$tentativas_login" -eq 2 ]; then
@@ -361,25 +378,25 @@ fi
 rm -rf "$DV" "$FAKE_STATE_FILE" "$OUT"
 
 # ============================================================
-# Cenário 3b: reinstalação — SÓ "admin" funciona, e a renomeação FALHA de
-# verdade (HTTP != 200): a mensagem final tem que mostrar "admin" (a
-# realidade), nunca mentir dizendo que é o alvo
+# Cenário 3b: instalação NOVA em que a renomeação FALHA de verdade
+# (HTTP != 200): a mensagem final tem que mostrar "admin" (a realidade),
+# nunca mentir dizendo que é o alvo
 # ============================================================
 DV="$(mktemp -d)"
 FAKE_STATE_FILE="$(mktemp -u)"
 printf 'USER=admin\nPASS=%s\n' "$SENHA" > "$FAKE_STATE_FILE"
 FAKE_RENAME_HTTP=500
 OUT="$(mktemp)"
-saida="$(rodar_cenario "$DV" "carlosadm" "$SENHA" "true" "$OUT")"
+saida="$(rodar_cenario "$DV" "carlosadm" "$SENHA" "false" "$OUT")"
 if [ "$saida" = "USER_PORTAINER_FINAL=admin|CREDENCIAIS_APLICADAS=true" ]; then
-  ok "reinstalação (renomeação falha): mensagem final reflete a realidade ('admin'), não mente"
+  ok "instalação nova (renomeação falha): mensagem final reflete a realidade ('admin'), não mente"
 else
-  falha "reinstalação (renomeação falha): esperado 'USER_PORTAINER_FINAL=admin|CREDENCIAIS_APLICADAS=true', obtido '$saida'"
+  falha "instalação nova (renomeação falha): esperado 'USER_PORTAINER_FINAL=admin|CREDENCIAIS_APLICADAS=true', obtido '$saida'"
 fi
-if grep -qF "usuário: admin)" "$OUT"; then
-  ok "reinstalação (renomeação falha): a mensagem impressa cita 'admin', não o alvo não-aplicado"
+if grep -qF "usuário: admin)" "$OUT" && grep -q "api/users/1" "$FAKE_LOG"; then
+  ok "instalação nova (renomeação falha): tentou renomear e a mensagem impressa cita 'admin', não o alvo não-aplicado"
 else
-  falha "reinstalação (renomeação falha): mensagem impressa não cita 'admin': $(cat "$OUT")"
+  falha "instalação nova (renomeação falha): sem tentativa de renomear ou mensagem não cita 'admin': $(cat "$OUT")"
 fi
 rm -rf "$DV" "$FAKE_STATE_FILE" "$OUT"
 

@@ -1493,11 +1493,11 @@ validar_dominio() {
 #
 # Uso: renomear_admin_portainer_se_necessario <rede> <usuario_alvo> <senha> <token_admin> [usuario_atual=admin]
 # Efeitos: define USER_PORTAINER_FINAL (global).
-# <usuario_atual> é o usuário com quem <token_admin> já autenticou — normalmente
-# "admin" (bootstrap novo), mas numa reinstalação pode já ser outro nome
-# (ver finalizar_admin_portainer, único chamador hoje). Sem isso, uma
-# renomeação que falhasse "mantinha admin" mesmo quando o usuário de
-# verdade era outro — mentindo pro operador.
+# <usuario_atual> é o usuário com quem <token_admin> já autenticou — é o nome
+# que fica (e que a mensagem de falha cita) se a renomeação não passar. Hoje
+# o único chamador (finalizar_admin_portainer) só renomeia num banco
+# recém-criado, então na prática é sempre "admin"; o parâmetro existe para a
+# mensagem nunca afirmar um nome diferente do usuário que autenticou.
 MSG_PT[renomear_admin_portainer_falha]="\e[33m⚠️  Não foi possível renomear o admin do Portainer para \"%s\" (HTTP %s) — mantendo \"%s\".\e[0m"
 MSG_EN[renomear_admin_portainer_falha]="\e[33m⚠️  Could not rename the Portainer admin to \"%s\" (HTTP %s) — keeping \"%s\".\e[0m"
 MSG_ES[renomear_admin_portainer_falha]="\e[33m⚠️  No fue posible renombrar el admin de Portainer a \"%s\" (HTTP %s) — manteniendo \"%s\".\e[0m"
@@ -1580,10 +1580,11 @@ renomear_admin_portainer_se_necessario() {
 # Numa instalação NOVA (<ja_inicializado> != true) só "admin" pode existir
 # ainda — pula direto pra ele, sem gastar 2 chamadas HTTP fadadas a falhar.
 #
-# Autenticado com sucesso, tenta renomear para o alvo (reaproveitando
-# renomear_admin_portainer_se_necessario, que já é no-op se o usuário atual
-# já for o alvo) e SÓ ENTÃO imprime a mensagem de sucesso — com o usuário
-# final de verdade, sucesso ou não da renomeação.
+# Autenticado com sucesso numa instalação NOVA, tenta renomear "admin" para o
+# alvo (reaproveitando renomear_admin_portainer_se_necessario) e SÓ ENTÃO
+# imprime a mensagem de sucesso — com o usuário final de verdade, sucesso ou
+# não da renomeação. Numa REINSTALAÇÃO nunca renomeia: mantém o usuário que
+# autenticou (ver o comentário no corpo da função).
 #
 # Sem nenhum candidato autenticando: CREDENCIAIS_APLICADAS fica false (quem
 # chama grava "Criar manualmente.", comportamento de fallback preservado);
@@ -1648,7 +1649,18 @@ finalizar_admin_portainer() {
     fi
 
     CREDENCIAIS_APLICADAS=true
-    renomear_admin_portainer_se_necessario "$rede" "$alvo" "$senha" "$token" "$usuario_atual"
+    if [ "$ja_inicializado" = true ]; then
+        # Reinstalação: o admin do 'portainer_data' preservado fica com o nome
+        # que já tem — é o que ..._dados_preservados/..._volume_existente
+        # prometem ao operador logo antes. Renomear aqui quebraria o
+        # PORTAINER_USER gravado na stack do painel (a opção 2 do menu
+        # reinstala só Traefik+Portainer, sem regravar o painel), e o
+        # PUT /api/users/1 da renomeação só é com certeza o usuário
+        # autenticado num banco recém-criado.
+        USER_PORTAINER_FINAL="$usuario_atual"
+    else
+        renomear_admin_portainer_se_necessario "$rede" "$alvo" "$senha" "$token" "$usuario_atual"
+    fi
     echo -e "$(t finalizar_admin_portainer_pronto "$USER_PORTAINER_FINAL")"
 }
 
