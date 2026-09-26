@@ -224,15 +224,22 @@ describe("peersFromNodes", () => {
 
   it("Status.Addr '0.0.0.0' (não especificado) cai para o IP real de ManagerStatus.Addr", () => {
     expect(peersFromNodes([no("0.0.0.0", "31.97.144.25:2377"), no("10.0.0.6")])).toEqual([
-      "31.97.144.25",
       "10.0.0.6",
+      "31.97.144.25",
     ]);
-    expect(peersFromNodes([no("::", "[fd00::9]:2377"), no("10.0.0.6")])).toEqual(["fd00::9", "10.0.0.6"]);
+    expect(peersFromNodes([no("::", "[fd00::9]:2377"), no("10.0.0.6")])).toEqual(["10.0.0.6", "fd00::9"]);
   });
 
   it("lixo que não é IP literal (lista com vírgula, espaço, hostname, zona IPv6) é ignorado", () => {
     const nodes = [no("10.0.0.5,1.2.3.4"), no("10.0.0.5 1.2.3.4"), no("node-1.local"), no("fe80::1%eth0"), no("10.0.0.6")];
     expect(peersFromNodes(nodes)).toEqual(["10.0.0.6"]);
+  });
+
+  it("determinismo: ordem dos nós na resposta da API não muda a saída; IP repetido sai uma vez só", () => {
+    const a = peersFromNodes([no("10.0.0.7"), no("10.0.0.5"), no("10.0.0.6")]);
+    const b = peersFromNodes([no("10.0.0.6"), no("10.0.0.7"), no("10.0.0.5")]);
+    expect(a).toEqual(b);
+    expect(peersFromNodes([no("10.0.0.6"), no("10.0.0.5"), no("10.0.0.6")])).toEqual(["10.0.0.5", "10.0.0.6"]);
   });
 
   it("determinismo: mesma entrada produz a mesma saída", () => {

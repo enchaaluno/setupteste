@@ -160,7 +160,9 @@ function limparEndereco(bruto: unknown): string | null {
 }
 
 /**
- * Extrai a lista de endereços de nós prontos para `ENCHA_GUARD_PEERS`.
+ * Extrai a lista de endereços dos nós do Swarm para `ENCHA_GUARD_PEERS` —
+ * de TODOS os nós listados, sem filtrar por estado (um nó "down" que volta
+ * precisa já estar liberado).
  * Nó único: a allowlist é vazia — o guarda já aceita `lo`, e um pacote com
  * IP local de origem que chegasse de fora seria descartado como martian de
  * qualquer forma, então não há necessidade de o nó se autopermitir. Com 2+
@@ -170,10 +172,14 @@ function limparEndereco(bruto: unknown): string | null {
  */
 export function peersFromNodes(nodes: DockerNode[]): string[] {
   if (nodes.length <= 1) return [];
-  const enderecos: string[] = [];
+  const enderecos = new Set<string>();
   for (const node of nodes) {
     const endereco = extrairEndereco(node);
-    if (endereco) enderecos.push(endereco);
+    if (endereco) enderecos.add(endereco);
   }
-  return enderecos;
+  // Ordenada e sem repetição: a saída depende só do CONJUNTO de endereços,
+  // nunca da ordem em que a API devolveu os nós nem de dois nós reportarem
+  // o mesmo IP — senão o C6, comparando o Env desejado com o atual, veria
+  // "spec difere" sem nada ter mudado e recriaria a tarefa do guarda à toa.
+  return Array.from(enderecos).sort();
 }
