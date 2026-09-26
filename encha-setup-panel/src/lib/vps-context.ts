@@ -69,3 +69,40 @@ export function getVpsContext(): VpsContext {
 export function resetVpsContextCache(): void {
   cached = null;
 }
+
+// Marcador não secreto do C10 (plano de segurança, achado A2): gravado em
+// /root/dados_vps/seguranca (modo 644) por instalar_protecao_ssh no
+// secondary.sh SÓ quando o fail2ban foi instalado/configurado com sucesso —
+// mesmo mount de CTX_DIR que dados_vps/encha_locale já usam. CONTRATO para o
+// C10 seguir: só a EXISTÊNCIA do arquivo importa, não o conteúdo — o C10 pode
+// gravar "fail2ban=ok", uma linha qualquer ou deixar vazio, tanto faz; não
+// crie aqui nenhuma dependência de formato/conteúdo específico sem atualizar
+// este comentário e o teste correspondente.
+//
+// Ao contrário de getVpsContext() (que cacheia para sempre — dados_vps só é
+// escrito numa instalação nova), este marcador pode aparecer numa VPS já em
+// produção, com o painel já rodando, quando o operador roda
+// `proteger-ssh`/instalar_protecao_ssh manualmente depois do C10 existir —
+// então NÃO cacheamos o resultado entre chamadas, senão o aviso nunca some
+// sem reiniciar o container do painel.
+//
+// readFileSync (não existsSync) para poder diferenciar ausência (ENOENT — o
+// caso comum hoje, nenhuma instalação rodou o C10 ainda; nunca loga) de um
+// erro de leitura de verdade (permissão etc. — anômalo; loga no máximo 1x
+// por processo, mesmo padrão de avisarUmaVez em lib/security/segredo.ts).
+let avisadoErroProtecaoSsh = false;
+
+export function protecaoSshInstalada(): boolean {
+  const caminho = join(CTX_DIR, "seguranca");
+  try {
+    readFileSync(caminho);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT" && !avisadoErroProtecaoSsh) {
+      avisadoErroProtecaoSsh = true;
+      console.warn(`[vps-context] erro lendo marcador de segurança (${caminho}):`, e);
+    }
+    return false;
+  }
+}

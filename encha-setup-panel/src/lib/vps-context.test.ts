@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseDadosVps } from "./vps-context";
 
 // Cobre a migração das chaves de dados_vps para inglês (Fase 0 de i18n —
@@ -58,4 +61,63 @@ Internal Network: net-x
   it("string vazia não quebra e devolve objeto vazio", () => {
     expect(parseDadosVps("")).toEqual({});
   });
+});
+
+// protecaoSshInstalada (C8, plano de segurança / A2) — leitor do marcador
+// não secreto do C10 (/root/dados_vps/seguranca, montado em VPS_CONTEXT_DIR).
+// vps-context.ts lê VPS_CONTEXT_DIR no top-level (module scope, mesmo padrão
+// de monitor.ts/MONITOR_BASE_URL) — cada teste reseta o registro de módulos
+// e reimporta depois de ajustar o env, senão todos os testes deste describe
+// dividiriam o mesmo CTX_DIR resolvido no primeiro import do arquivo.
+describe("protecaoSshInstalada", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "vps-context-seguranca-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    delete process.env.VPS_CONTEXT_DIR;
+  });
+
+  async function importVpsContext() {
+    vi.resetModules();
+    process.env.VPS_CONTEXT_DIR = dir;
+    return import("./vps-context");
+  }
+
+  it("marcador ausente -> false, sem logar (caso normal: instalação anterior ao C10)", async () => {
+    const aviso = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { protecaoSshInstalada } = await importVpsContext();
+    expect(protecaoSshInstalada()).toBe(false);
+    expect(aviso).not.toHaveBeenCalled();
+  });
+
+  it("marcador presente com conteúdo -> true (só a existência importa)", async () => {
+    writeFileSync(join(dir, "seguranca"), "fail2ban=ok");
+    const { protecaoSshInstalada } = await importVpsContext();
+    expect(protecaoSshInstalada()).toBe(true);
+  });
+
+  it("marcador presente vazio -> true (contrato: existir já basta, sem formato de conteúdo)", async () => {
+    writeFileSync(join(dir, "seguranca"), "");
+    const { protecaoSshInstalada } = await importVpsContext();
+    expect(protecaoSshInstalada()).toBe(true);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "erro de leitura (sem permissão) -> false, loga no máximo 1x por processo",
+    async () => {
+      const caminho = join(dir, "seguranca");
+      writeFileSync(caminho, "fail2ban=ok");
+      chmodSync(caminho, 0o000);
+      const aviso = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { protecaoSshInstalada } = await importVpsContext();
+      expect(protecaoSshInstalada()).toBe(false);
+      expect(protecaoSshInstalada()).toBe(false); // segunda chamada não loga de novo
+      expect(aviso).toHaveBeenCalledTimes(1);
+      chmodSync(caminho, 0o644); // permite o rmSync do afterEach limpar o diretório
+    }
+  );
 });
