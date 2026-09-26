@@ -374,13 +374,16 @@ MSG_PT[aviso_legal_acao_ssl]="${amarelo} • Emitir certificado SSL (Let's Encry
 MSG_EN[aviso_legal_acao_ssl]="${amarelo} • Issue an SSL certificate (Let's Encrypt), sending your email to it${reset}"
 MSG_ES[aviso_legal_acao_ssl]="${amarelo} • Emitir certificado SSL (Let's Encrypt), enviando su correo a ella${reset}"
 
-MSG_PT[aviso_legal_acao_guarda]="${amarelo} • Bloquear, automaticamente, as portas internas do cluster e limitar tentativas${reset}"
-MSG_EN[aviso_legal_acao_guarda]="${amarelo} • Automatically block the cluster's internal ports and limit connection${reset}"
-MSG_ES[aviso_legal_acao_guarda]="${amarelo} • Bloquear, automáticamente, los puertos internos del cluster y limitar los${reset}"
+# Resumo da Cláusula 6.1 dos Termos: o fail2ban é instalado por ESTE
+# instalador (instalar_protecao_ssh, C10); o bloqueio das portas do Swarm e o
+# limite de novas conexões SSH vêm do encha-guard que o painel cria (C4-C7).
+MSG_PT[aviso_legal_acao_guarda]="${amarelo} • Proteger o SSH (fail2ban e limite de novas conexões) e bloquear as portas${reset}"
+MSG_EN[aviso_legal_acao_guarda]="${amarelo} • Protect SSH (fail2ban and a limit on new connections) and block the${reset}"
+MSG_ES[aviso_legal_acao_guarda]="${amarelo} • Proteger el SSH (fail2ban y límite de conexiones nuevas) y bloquear los${reset}"
 
-MSG_PT[aviso_legal_acao_guarda2]="${amarelo}   de conexão SSH — não é um firewall completo (Cláusula 6.1 dos Termos)${reset}"
-MSG_EN[aviso_legal_acao_guarda2]="${amarelo}   attempts via SSH — this is not a full firewall (Terms, Clause 6.1)${reset}"
-MSG_ES[aviso_legal_acao_guarda2]="${amarelo}   intentos de conexión SSH — no es un firewall completo (Cláusula 6.1)${reset}"
+MSG_PT[aviso_legal_acao_guarda2]="${amarelo}   internas do cluster — não é um firewall completo (Cláusula 6.1 dos Termos)${reset}"
+MSG_EN[aviso_legal_acao_guarda2]="${amarelo}   cluster's internal ports — this is not a full firewall (Terms, Clause 6.1)${reset}"
+MSG_ES[aviso_legal_acao_guarda2]="${amarelo}   puertos internos del cluster — no es un firewall completo (Términos, Cláusula 6.1)${reset}"
 
 MSG_PT[aviso_legal_garantia]="${amarelo}Fornecido \"no estado em que se encontra\", sem garantia. Use uma VPS nova${reset}"
 MSG_EN[aviso_legal_garantia]="${amarelo}Provided \"as is\", with no warranty. Use a fresh VPS${reset}"
