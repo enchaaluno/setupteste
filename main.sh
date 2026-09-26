@@ -1479,6 +1479,12 @@ MSG_ES[mostrar_resumo_suporte]="${ciano}${negrito}Soporte:${reset}"
 # outros dois (senha/root) são independentes do fail2ban e checam
 # `sshd -T` de novo aqui, porque a decisão de desabilitar é sempre manual
 # (nunca automatizada — ver o comentário de instalar_protecao_ssh).
+# O passo a passo grava num drop-in 00-encha.conf, nunca "edite o
+# sshd_config" (auditoria C10): o sshd_config do Debian 13 faz Include de
+# sshd_config.d/*.conf no topo e o sshd usa o PRIMEIRO valor lido — na VPS
+# de teste o sshd_config já dizia "PasswordAuthentication no" e o
+# 50-cloud-init.conf da imagem ligava a senha mesmo assim. O "00-" vence o
+# "50-", e o `sshd -t` antes do restart evita derrubar o SSH por typo.
 MSG_PT[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ Proteção do SSH:${reset}"
 MSG_EN[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ SSH protection:${reset}"
 MSG_ES[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ Protección del SSH:${reset}"
@@ -1491,13 +1497,13 @@ MSG_PT[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI prote
 MSG_EN[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI proteger-ssh${reset}"
 MSG_ES[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI proteger-ssh${reset}"
 
-MSG_PT[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}O SSH ainda aceita login por senha. Recomendado (só depois de confirmar que sua chave SSH funciona): edite /etc/ssh/sshd_config, defina 'PasswordAuthentication no' e rode 'systemctl restart ssh'.${reset}"
-MSG_EN[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}SSH still accepts password login. Recommended (only after confirming your SSH key works): edit /etc/ssh/sshd_config, set 'PasswordAuthentication no' and run 'systemctl restart ssh'.${reset}"
-MSG_ES[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}El SSH todavía acepta login por contraseña. Recomendado (solo después de confirmar que su clave SSH funciona): edite /etc/ssh/sshd_config, defina 'PasswordAuthentication no' y ejecute 'systemctl restart ssh'.${reset}"
+MSG_PT[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}O SSH ainda aceita login por senha. Recomendado (só depois de confirmar que sua chave SSH funciona): echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh — editar só o /etc/ssh/sshd_config não basta quando outro arquivo de sshd_config.d/ (ex.: 50-cloud-init.conf) liga a senha.${reset}"
+MSG_EN[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}SSH still accepts password login. Recommended (only after confirming your SSH key works): echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh — editing only /etc/ssh/sshd_config is not enough when another file in sshd_config.d/ (e.g. 50-cloud-init.conf) turns passwords on.${reset}"
+MSG_ES[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}El SSH todavía acepta login por contraseña. Recomendado (solo después de confirmar que su clave SSH funciona): echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh — editar solo /etc/ssh/sshd_config no basta cuando otro archivo de sshd_config.d/ (ej.: 50-cloud-init.conf) activa la contraseña.${reset}"
 
-MSG_PT[mostrar_resumo_ssh_root_aviso]="  ${amarelo}O SSH ainda permite login direto como root. Recomendado (use um usuário com sudo): edite /etc/ssh/sshd_config, defina 'PermitRootLogin no' e rode 'systemctl restart ssh'.${reset}"
-MSG_EN[mostrar_resumo_ssh_root_aviso]="  ${amarelo}SSH still allows direct root login. Recommended (use a user with sudo): edit /etc/ssh/sshd_config, set 'PermitRootLogin no' and run 'systemctl restart ssh'.${reset}"
-MSG_ES[mostrar_resumo_ssh_root_aviso]="  ${amarelo}El SSH todavía permite login directo como root. Recomendado (use un usuario con sudo): edite /etc/ssh/sshd_config, defina 'PermitRootLogin no' y ejecute 'systemctl restart ssh'.${reset}"
+MSG_PT[mostrar_resumo_ssh_root_aviso]="  ${amarelo}O SSH ainda aceita login como root por senha. Recomendado (só depois de confirmar que sua chave SSH funciona; o root continua entrando por chave): echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh${reset}"
+MSG_EN[mostrar_resumo_ssh_root_aviso]="  ${amarelo}SSH still accepts root login by password. Recommended (only after confirming your SSH key works; root keeps logging in by key): echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh${reset}"
+MSG_ES[mostrar_resumo_ssh_root_aviso]="  ${amarelo}El SSH todavía acepta login como root por contraseña. Recomendado (solo después de confirmar que su clave SSH funciona; root sigue entrando por clave): echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config.d/00-encha.conf && sshd -t && systemctl restart ssh${reset}"
 
 mostrar_resumo_final() {
     clear

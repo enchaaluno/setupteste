@@ -418,6 +418,26 @@ else
 fi
 
 # ============================================================
+# 8b. Avisos de senha/root do resumo final (main.sh): o passo a passo grava
+#     num drop-in 00-encha.conf e valida com `sshd -t` — nunca "edite o
+#     sshd_config" (auditoria C10: no Debian 13 o Include de
+#     sshd_config.d/*.conf fica no topo e o PRIMEIRO valor vence; na VPS de
+#     teste o 50-cloud-init.conf ligava a senha com o sshd_config dizendo
+#     "no"). Vale para os 3 idiomas.
+# ============================================================
+for idioma in PT EN ES; do
+  for chave in mostrar_resumo_ssh_senha_aviso mostrar_resumo_ssh_root_aviso; do
+    linha="$(grep -m1 "^MSG_${idioma}\[$chave\]=" main.sh)"
+    if printf '%s' "$linha" | grep -qF '/etc/ssh/sshd_config.d/00-encha.conf' \
+       && printf '%s' "$linha" | grep -qF 'sshd -t &&'; then
+      ok "MSG_${idioma}[$chave]: drop-in 00-encha.conf + sshd -t antes do restart"
+    else
+      falha "MSG_${idioma}[$chave] não manda gravar em sshd_config.d/00-encha.conf com sshd -t antes do restart: $linha"
+    fi
+  done
+done
+
+# ============================================================
 # 9. Se disponível no ambiente, validação com o fail2ban DE VERDADE (fora
 #    do PATH falso). Nunca falha o teste por ausência — mas, quando roda,
 #    precisa provar alguma coisa (auditoria C10: a versão anterior rodava
