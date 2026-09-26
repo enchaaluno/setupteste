@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, getServiceToken, PortainerError } from "@/lib/portainer";
 import { createSession, setCsrfCookie, destroySession } from "@/lib/session";
 import { getLocalAdmin, hasServiceCredentials, verifyLocalAdmin } from "@/lib/auth/local-admin";
+import { dispararGarantiaAposLoginLegado } from "@/lib/guard-runtime";
 import { logAudit } from "@/lib/audit";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getClientIp, verifyOrigin, verifyCsrf } from "@/lib/csrf";
@@ -113,12 +114,17 @@ export async function POST(req: NextRequest) {
 
   // Modo legado: sem admin próprio, o login é um proxy direto para o
   // Portainer (comportamento anterior a esta mudança, mantido para não
-  // travar instalações já existentes — ver requireSessionToken).
+  // travar instalações já existentes — ver requireSessionToken). É também
+  // o único lugar (fora de instrumentation.ts, que não tem credencial de
+  // serviço nessa instalação) onde o encha-guard tem chance de ser
+  // garantido — fire-and-forget, nunca atrasa nem faz a resposta de login
+  // "falhar" por causa disso (ciclo C6 do plano de segurança).
   try {
     const jwt = await authenticate(username, password);
     await createSession({ user: username, jwt, exp, mode: "portainer" });
     await setCsrfCookie(newCsrfToken());
     logAudit({ user: username, ip, action: "login.success", result: "ok", meta: { mode: "portainer" } });
+    dispararGarantiaAposLoginLegado(jwt);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[auth] erro no login:", e);
