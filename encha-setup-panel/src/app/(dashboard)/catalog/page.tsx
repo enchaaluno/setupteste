@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { StackCard, type CatalogEntry } from "@/components/stack-card";
 import { InstallWizard } from "@/components/wizard/install-wizard";
 import { SshInstallHint } from "@/components/ssh-install-hint";
+import { SshProtectionWarning } from "@/components/ssh-protection-warning";
 import { Input } from "@/components/ui/input";
 import { getCategoryLabel } from "@/lib/category-labels";
 import { Search, Boxes, X, AlertTriangle } from "lucide-react";
@@ -53,6 +54,8 @@ function CatalogPageInner() {
   const [csrf, setCsrf] = useState<string>("");
   const [swarmCtx, setSwarmCtx] = useState({ networkName: "enchanet", serverName: "encha", email: "" });
   const [vpsDefaults, setVpsDefaults] = useState<Record<string, string>>({});
+  // null enquanto /api/vps-context não respondeu — ver deveExibirAvisoProtecaoSsh.
+  const [sshProtected, setSshProtected] = useState<boolean | null>(null);
 
   // Só a resposta da requisição mais recente é aplicada: com o refetch por
   // troca de locale (abaixo) + polling de deploy, duas chamadas podem voar
@@ -101,6 +104,9 @@ function CatalogPageInner() {
           email_ssl: d.email_ssl ?? "",
           url_portainer: d.url_portainer ?? "",
         });
+        // Campo ausente (painel mais antigo/rota mockada) fica no default
+        // "protegido" — nunca mostra um aviso indevido por falta do campo.
+        setSshProtected(typeof d.protecaoSshInstalada === "boolean" ? d.protecaoSshInstalada : true);
       })
       .catch((e) => console.error("[vps-context]", e));
   }, []);
@@ -231,6 +237,8 @@ function CatalogPageInner() {
           </span>
         </div>
       )}
+
+      <SshProtectionWarning protecaoInstalada={sshProtected} />
 
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
