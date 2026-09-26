@@ -614,4 +614,43 @@ else
   falha "inspect do serviço falhou: removeu panel_admin_password_ANTERIOR mesmo sem saber se o serviço ainda a referencia"
 fi
 
+# ============================================================
+# Cenário 9 (auditoria C9): instalação JÁ migrada (senha só no secret),
+# ninguém digitou senha, e a imagem que vai rodar NÃO tem o label -> pára
+# (RC=1) sem fazer deploy. Antes, subia o painel com PANEL_ADMIN_PASSWORD
+# vazia e sem _FILE/_SECRET_NAME: sem admin local e com o ponteiro para o
+# secret perdido de vez (a rodada seguinte já cairia no "sem admin").
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="guarda-swarm"
+FAKE_STACK_EXISTS=true
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""},{"name":"PANEL_ADMIN_PASSWORD_SECRET_NAME","value":"panel_admin_password_1111111111"}]'
+echo "panel_admin_password_1111111111" >> "$FAKE_SECRETS_FILE"
+
+saida="$(rodar_deploy "0.3.5")"
+if [ "$saida" = "RC=1" ] && [ ! -s "$CAPTURED_ENV_FILE" ] \
+   && grep -qF "deploy_stack_painel_via_portainer_segredo_inacessivel" "$SAIDA_STDOUT"; then
+  ok "migrado + imagem sem label + sem senha digitada: pára antes do deploy (não sobe painel sem admin)"
+else
+  falha "migrado + imagem sem label: esperado RC=1 sem deploy e aviso segredo_inacessivel, obtido '$saida', env enviado: $(cat "$CAPTURED_ENV_FILE" 2>/dev/null)"
+fi
+
+# ============================================================
+# Cenário 10 (auditoria C9): migrado, imagem com label, mas o secret
+# registrado foi apagado à mão -> pára com mensagem clara, em vez de
+# mandar pro Portainer um compose que referencia secret inexistente.
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="credenciais-arquivo"
+FAKE_STACK_EXISTS=true
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""},{"name":"PANEL_ADMIN_PASSWORD_SECRET_NAME","value":"panel_admin_password_APAGADO"}]'
+
+saida="$(rodar_deploy "0.3.5")"
+if [ "$saida" = "RC=1" ] && [ ! -s "$CAPTURED_ENV_FILE" ] \
+   && grep -qF "deploy_stack_painel_via_portainer_segredo_inacessivel" "$SAIDA_STDOUT"; then
+  ok "migrado + secret registrado apagado à mão: pára antes do deploy com aviso claro"
+else
+  falha "migrado + secret apagado: esperado RC=1 sem deploy e aviso segredo_inacessivel, obtido '$saida'"
+fi
+
 [ "$falhas" -eq 0 ] || exit 1

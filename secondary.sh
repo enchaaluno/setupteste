@@ -26875,6 +26875,10 @@ MSG_ES[deploy_stack_painel_via_portainer_sucesso]="  \e[32m✓ Stack 'encha-pane
 #                                do deploy confirmado, limpar a versão
 #                                anterior.
 ################################################################################
+MSG_PT[deploy_stack_painel_via_portainer_segredo_inacessivel]="  \e[31m✖ A senha do admin do painel está guardada só no secret %s, que não existe mais ou que a imagem %s não sabe ler. Nada foi alterado. Rode a instalação do painel pelo wizard e digite a senha do admin de novo.\e[0m"
+MSG_EN[deploy_stack_painel_via_portainer_segredo_inacessivel]="  \e[31m✖ The panel admin password is stored only in secret %s, which no longer exists or which image %s cannot read. Nothing was changed. Run the panel installation via the wizard and type the admin password again.\e[0m"
+MSG_ES[deploy_stack_painel_via_portainer_segredo_inacessivel]="  \e[31m✖ La contraseña del admin del panel está guardada solo en el secret %s, que ya no existe o que la imagen %s no sabe leer. No se cambió nada. Ejecute la instalación del panel por el asistente y escriba de nuevo la contraseña del admin.\e[0m"
+
 MSG_PT[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ Não foi possível criar o secret de apoio %s (seguindo sem ele).\e[0m"
 MSG_EN[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ Could not create the placeholder secret %s (continuing without it).\e[0m"
 MSG_ES[garantir_segredos_credenciais_painel_bootstrap_falhou]="  \e[33m↳ No fue posible crear el secret de apoyo %s (continuando sin él).\e[0m"
@@ -27084,6 +27088,22 @@ deploy_stack_painel_via_portainer() {
     local tem_label_credenciais=false
     if imagem_painel_tem_label_credenciais_arquivo "ghcr.io/enchaaluno/setup-panel:${tag_imagem}"; then
         tem_label_credenciais=true
+    fi
+
+    # Auditoria C9: sem senha em texto (instalação já migrada, ninguém
+    # digitou senha nova), o admin só existe DENTRO do secret registrado. Isso
+    # só serve se a imagem que vai rodar lê _FILE (label) E o secret ainda
+    # existe. Sem label, o env_json sairia com PANEL_ADMIN_PASSWORD vazia e
+    # sem _FILE/_SECRET_NAME — painel sem admin local e o ponteiro para o
+    # secret perdido de vez. Com o secret apagado à mão, o Portainer recusaria
+    # o deploy com um erro opaco. Nos dois casos, pára antes de mexer em
+    # qualquer coisa (a stack atual continua como está).
+    if [ -z "$panel_pass_val" ]; then
+        if [ "$tem_label_credenciais" != true ] \
+            || ! docker secret inspect "$panel_admin_password_secret_atual" >/dev/null 2>&1; then
+            echo -e "$(t deploy_stack_painel_via_portainer_segredo_inacessivel "$panel_admin_password_secret_atual" "ghcr.io/enchaaluno/setup-panel:${tag_imagem}")"
+            return 1
+        fi
     fi
 
     garantir_segredos_credenciais_painel "panel_admin_password" "$panel_pass_val" "$tem_label_credenciais" "$panel_admin_password_secret_atual"
