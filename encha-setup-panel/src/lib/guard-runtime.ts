@@ -158,18 +158,17 @@ async function atualizarGuarda(
   atual: DockerServiceFull,
   desejado: ServiceSpec
 ): Promise<void> {
-  try {
-    await updateService(token, endpointId, atual.ID, atual.Version.Index, desejado);
-    console.log(`[guard] ${GUARD_SERVICE_NAME} atualizado.`);
-  } catch (e) {
-    // 409 = Version.Index ficou desatualizado (outra chamada concorrente
-    // atualizou entre a leitura e este update) — a próxima janela reconcilia.
-    if (e instanceof PortainerError && e.status === 409) {
-      console.warn(`[guard] ${GUARD_SERVICE_NAME}: conflito de versão (409) ao atualizar — a próxima janela reconcilia.`);
-      return;
-    }
-    throw e;
-  }
+  // SEM tratamento especial de 409 aqui (ao contrário do create). No update,
+  // o Docker NÃO sinaliza corrida de Version.Index com 409: o swarmkit
+  // devolve `update out of sequence` (store.ErrSequenceConflict, erro gRPC
+  // sem código → HTTP 500). Um 409 no update só vem de codes.AlreadyExists
+  // — conflito real e persistente, que se repetiria a cada janela. Em
+  // qualquer falha o update NÃO foi aplicado: deixa subir para o catch de
+  // garantirGuardaSwarm (console.error com a mensagem real) e a próxima
+  // janela relê o serviço (Version.Index novo) e tenta de novo. Nunca
+  // "engolir como sucesso".
+  await updateService(token, endpointId, atual.ID, atual.Version.Index, desejado);
+  console.log(`[guard] ${GUARD_SERVICE_NAME} atualizado.`);
 }
 
 // Campos comparados: imagem, Healthcheck, capabilities e Networks (resolvendo

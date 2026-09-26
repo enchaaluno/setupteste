@@ -212,8 +212,15 @@ describe("garantirGuardaSwarm", () => {
     expect(avisoMock).toHaveBeenCalledWith(expect.stringContaining("409"));
   });
 
-  it("409 do updateService (Version.Index desatualizado) é tratado sem lançar", async () => {
+  // Auditoria C6: no update, 409 NÃO é "corrida de Version.Index" (essa o
+  // Docker devolve como 500 "update out of sequence"); é conflito real. Em
+  // qualquer caso o update NÃO foi aplicado — nunca pode ser tratado como
+  // sucesso/aviso de concorrência: sobe como erro (logado por
+  // garantirGuardaSwarm) e a próxima janela relê e tenta de novo.
+  it("409 do updateService NÃO é engolido: sobe como erro e é logado como falha (a próxima janela relê)", async () => {
+    const erroMock = vi.spyOn(console, "error").mockImplementation(() => {});
     const avisoMock = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logMock = vi.spyOn(console, "log").mockImplementation(() => {});
     const { PortainerError } = await import("./portainer");
     const { updateServiceMock } = await setupMocks({
       guardAtual: fakeGuardServiceIdentico({ image: "outra-imagem@sha256:x" }),
@@ -221,11 +228,30 @@ describe("garantirGuardaSwarm", () => {
         throw new PortainerError(409, "conflict");
       },
     });
-    const { garantirGuardaSwarm } = await import("./guard-runtime");
+    const { garantirGuardaSwarm, garantirGuardaSwarmOuLanca } = await import("./guard-runtime");
 
+    await expect(garantirGuardaSwarmOuLanca("tok", 1)).rejects.toMatchObject({ status: 409 });
     await expect(garantirGuardaSwarm("tok", 1)).resolves.toBeUndefined();
-    expect(updateServiceMock).toHaveBeenCalledTimes(1);
-    expect(avisoMock).toHaveBeenCalledWith(expect.stringContaining("409"));
+    expect(updateServiceMock).toHaveBeenCalledTimes(2);
+    expect(erroMock).toHaveBeenCalled();
+    expect(avisoMock).not.toHaveBeenCalled();
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("atualizado"));
+  });
+
+  it("500 'update out of sequence' (a corrida real de Version.Index no Docker) também sobe como erro", async () => {
+    const erroMock = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { PortainerError } = await import("./portainer");
+    await setupMocks({
+      guardAtual: fakeGuardServiceIdentico({ image: "outra-imagem@sha256:x" }),
+      updateServiceImpl: async () => {
+        throw new PortainerError(500, "rpc error: code = Unknown desc = update out of sequence");
+      },
+    });
+    const { garantirGuardaSwarm, garantirGuardaSwarmOuLanca } = await import("./guard-runtime");
+
+    await expect(garantirGuardaSwarmOuLanca("tok", 1)).rejects.toMatchObject({ status: 500 });
+    await expect(garantirGuardaSwarm("tok", 1)).resolves.toBeUndefined();
+    expect(erroMock).toHaveBeenCalled();
   });
 
   it("erro que NÃO é 409 no createService também nunca escapa de garantirGuardaSwarm (é engolido e logado)", async () => {
