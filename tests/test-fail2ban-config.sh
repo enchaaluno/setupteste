@@ -216,6 +216,20 @@ else
   falha "ListenAddress com porta não entrou no jail: $(grep '^port' "$ETC_LA/jail.d/encha-sshd.local" 2>/dev/null)"
 fi
 
+# apt: instala iptables junto (satisfaz o "Recommends: nftables | iptables"
+# do fail2ban sem puxar o nftables) e nunca pede o nftables.
+ETC_APT="$(mktemp -d)"; DV_APT="$(mktemp -d)"
+FAKE_APT_LOG="$DV_APT/apt.log" FAKE_SYSTEMCTL_ATIVO=1 rodar "$ETC_APT" "$DV_APT" "$DV_APT/saida.log"
+linha_install="$(grep -E '(^| )install ' "$DV_APT/apt.log" 2>/dev/null)"
+if printf '%s' "$linha_install" | grep -qE '(^| )fail2ban( |$)' \
+   && printf '%s' "$linha_install" | grep -qE '(^| )python3-systemd( |$)' \
+   && printf '%s' "$linha_install" | grep -qE '(^| )iptables( |$)' \
+   && ! grep -q nftables "$DV_APT/apt.log"; then
+  ok "apt-get install: fail2ban + python3-systemd + iptables, nunca nftables"
+else
+  falha "apt-get install não bate o esperado: $(tr '\n' ';' < "$DV_APT/apt.log" 2>/dev/null)"
+fi
+
 # ============================================================
 # 4. Fallback de porta pra 22 quando sshd -T não devolve nada
 # ============================================================

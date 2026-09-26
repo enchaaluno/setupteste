@@ -25837,8 +25837,15 @@ instalar_protecao_ssh() {
     local etc_prefix="${ENCHA_FAIL2BAN_ETC_PREFIX:-/etc/fail2ban}"
 
     echo -e "$(t instalar_protecao_ssh_instalando)"
-    apt-get update -y > /dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd > /dev/null 2>&1
+    # "iptables" explícito (auditoria C10): o fail2ban do Debian 13 tem
+    # "Recommends: nftables | iptables" — numa máquina sem iptables o apt
+    # escolheria o nftables (o pacote que nunca instalamos, ver acima). Com
+    # o Docker instalado o iptables já está lá e isto não muda nada; é
+    # também o que a banaction iptables-multiport precisa. Lock::Timeout:
+    # numa VPS existente o unattended-upgrades pode estar segurando o dpkg
+    # — espera até 2 min em vez de falhar como "pacote indisponível".
+    apt-get -o DPkg::Lock::Timeout=120 update -y > /dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y fail2ban python3-systemd iptables > /dev/null 2>&1
 
     if ! command -v fail2ban-client &> /dev/null; then
         # Sem fail2ban não há proteção: nenhum marcador antigo pode ficar.
