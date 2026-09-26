@@ -25751,7 +25751,168 @@ instalar_ambiente_completo() {
   echo -e "\e[33m================================================================\e[0m"
   msg_retorno_menu
   menu_principal
-  
+
+}
+
+################################################################################
+# instalar_protecao_ssh — Ciclo C10 (achado A2 do plano de segurança do
+# EnchaT): fail2ban de verdade pro SSH — banimento prolongado e crescente
+# (até 1 dia) e visibilidade (fail2ban-client status sshd), complementar ao
+# guarda automático do Swarm (A1/C4-C7: limite de taxa de conexões novas via
+# nft, já ativo em TODA VPS, nova ou existente, sem ação do operador). Este
+# aqui é mais forte, mas só roda: (1) automaticamente em instalações NOVAS
+# (chamada por main.sh antes de mostrar_resumo_final); (2) por comando manual
+# `bash /root/SetupEnchaAI proteger-ssh` numa VPS existente (dispatcher em
+# main(), fim deste arquivo — COMANDO_PROTEGER_SSH em
+# encha-setup-panel/src/components/ssh-protection-warning.tsx tem essa string
+# fixa; não mude sem atualizar os dois lados); (3) pela opção 96 do menu.
+#
+# Idempotente por reescrita, não por detecção: toda chamada regrava os dois
+# arquivos de config abaixo do zero — mais simples e mais seguro que tentar
+# detectar "já rodou" e pular (nunca fica com config parcial de uma versão
+# antiga da função). Só a instalação do pacote em si pula sozinha (apt já é
+# idempotente).
+#
+# Backend TEM que ser "systemd": Debian 13 não tem /var/log/auth.log, só o
+# journal. E o OpenSSH 10 do Debian 13 loga as sessões pós-autenticação
+# (privsep) como processo "sshd-session", não "sshd" puro — o backend
+# systemd do fail2ban RECONSTRÓI uma linha estilo syslog a partir de
+# SYSLOG_IDENTIFIER/_COMM + PID + MESSAGE (ver formatJournalEntry em
+# fail2ban/server/filtersystemd.py) antes de aplicar o filtro; sem o daemon
+# certo no prefixo esperado, o filtro não vê o conteúdo da mensagem e
+# nenhuma tentativa de força bruta seria banida, silenciosamente.
+#
+# Confirmado ao vivo (não só lendo o fonte): instalando fail2ban 1.1.0-8
+# (candidato do Debian 13/trixie) e rodando `fail2ban-regex` contra a linha
+# sintética "sshd-session[1234]: Invalid user root from 1.2.3.4 port 5678" —
+# só bate com o override abaixo. O /etc/fail2ban/filter.d/sshd.conf de
+# origem desse pacote define, na seção [DEFAULT], "_daemon = sshd" (upstream
+# puro) — o Debian já traz um patch próprio que estende isso para
+# "sshd(?:-session)?" e ajusta o journalmatch padrão para "ssh.service" +
+# "_COMM=sshd-session", mas nosso override é um superconjunto
+# independente disso (cobre também "sshd-auth" e não depende do pacote
+# manter esse patch numa atualização futura). NÃO existe uma variável
+# separada chamada "sshd_daemon" no fail2ban 1.1.0 real — é "_daemon" mesmo,
+# e sobrescrevê-la em filter.d/sshd.local é o mecanismo nativo suportado
+# (fail2ban faz merge de .conf + .local por seção).
+#
+# journalmatch (jail.d/encha-sshd.local, abaixo) é independente do filtro:
+# decide quais entradas do journal ENTRAM no fluxo (cobre "ssh.service",
+# nome da unit no Debian, e "sshd.service", default de outras distros, mais
+# _COMM=sshd/_COMM=sshd-session). O filtro (_daemon) decide se o CONTEÚDO de
+# cada entrada que já entrou bate o padrão esperado.
+#
+# NUNCA instala o pacote "nftables" — mesmo motivo do A1/C4: o serviço
+# nftables.service do Debian faz "flush ruleset" no boot, que apagaria as
+# regras do guarda do Swarm se ele estivesse na mesma VPS. banaction é
+# iptables-multiport (iptables já é dependência obrigatória do
+# docker-ce/docker.io, sempre presente).
+#
+# NUNCA toca em sshd_config — não desliga PasswordAuthentication nem
+# PermitRootLogin (decisão do plano: automatizar isso arrisca trancar o
+# operador pra fora). Quem chama (mostrar_resumo_final, main.sh) avisa
+# separadamente se `sshd -T` mostrar os dois liberados, com o passo a passo
+# manual.
+################################################################################
+MSG_PT[instalar_protecao_ssh_instalando]="\e[97m🛡️  Instalando e configurando o fail2ban (proteção do SSH)...\e[0m"
+MSG_EN[instalar_protecao_ssh_instalando]="\e[97m🛡️  Installing and configuring fail2ban (SSH protection)...\e[0m"
+MSG_ES[instalar_protecao_ssh_instalando]="\e[97m🛡️  Instalando y configurando fail2ban (protección del SSH)...\e[0m"
+
+MSG_PT[instalar_protecao_ssh_falha_pacote]="\e[31m✖ Não foi possível instalar o fail2ban (pacote indisponível ou sem rede). O guarda automático do Swarm continua ativo, mas sem banimento prolongado do SSH.\e[0m"
+MSG_EN[instalar_protecao_ssh_falha_pacote]="\e[31m✖ Could not install fail2ban (package unavailable or no network). The automatic Swarm guard stays active, but without extended SSH banning.\e[0m"
+MSG_ES[instalar_protecao_ssh_falha_pacote]="\e[31m✖ No fue posible instalar fail2ban (paquete no disponible o sin red). El guarda automático del Swarm sigue activo, pero sin bloqueo prolongado del SSH.\e[0m"
+
+MSG_PT[instalar_protecao_ssh_falha_servico]="\e[31m✖ fail2ban foi instalado, mas o serviço não ficou ativo. Verifique 'systemctl status fail2ban' e 'journalctl -u fail2ban'.\e[0m"
+MSG_EN[instalar_protecao_ssh_falha_servico]="\e[31m✖ fail2ban was installed, but the service did not come up. Check 'systemctl status fail2ban' and 'journalctl -u fail2ban'.\e[0m"
+MSG_ES[instalar_protecao_ssh_falha_servico]="\e[31m✖ fail2ban fue instalado, pero el servicio no quedó activo. Verifique 'systemctl status fail2ban' y 'journalctl -u fail2ban'.\e[0m"
+
+MSG_PT[instalar_protecao_ssh_sucesso]="\e[32m✅ fail2ban ativo protegendo o SSH (porta(s): %s).\e[0m"
+MSG_EN[instalar_protecao_ssh_sucesso]="\e[32m✅ fail2ban is active protecting SSH (port(s): %s).\e[0m"
+MSG_ES[instalar_protecao_ssh_sucesso]="\e[32m✅ fail2ban activo protegiendo el SSH (puerto(s): %s).\e[0m"
+
+instalar_protecao_ssh() {
+    # Prefixo configurável só para teste (tests/test-fail2ban-config.sh) —
+    # em produção é sempre /etc/fail2ban. Nunca defina esta env var fora de
+    # teste.
+    local etc_prefix="${ENCHA_FAIL2BAN_ETC_PREFIX:-/etc/fail2ban}"
+
+    echo -e "$(t instalar_protecao_ssh_instalando)"
+    apt-get update -y > /dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd > /dev/null 2>&1
+
+    if ! command -v fail2ban-client &> /dev/null; then
+        echo -e "$(t instalar_protecao_ssh_falha_pacote)"
+        return 1
+    fi
+
+    # Porta(s) real(is) do sshd — sshd -T pode listar "port" mais de uma vez
+    # se houver múltiplas linhas "Port" no sshd_config; junta todas
+    # separadas por vírgula (fail2ban aceita "port = 22,2222" no jail).
+    # Fallback pra 22 se sshd -T não devolver nada (ex.: ambiente sem sshd).
+    local portas
+    portas="$(sshd -T 2>/dev/null | awk '/^port /{print $2}' | paste -sd, -)"
+    [ -z "$portas" ] && portas="22"
+
+    # IP de quem está conectado agora, se descobrível — nunca quebra a
+    # instalação se não conseguir (fica só com loopback no ignoreip).
+    local ip_operador=""
+    if [ -n "${SSH_CLIENT:-}" ]; then
+        ip_operador="${SSH_CLIENT%% *}"
+    fi
+    local ignoreip="127.0.0.1/8 ::1"
+    [ -n "$ip_operador" ] && ignoreip="$ignoreip $ip_operador"
+
+    mkdir -p "$etc_prefix/filter.d" "$etc_prefix/jail.d"
+
+    # Ver o comentário grande acima da função para o porquê exato deste
+    # override (OpenSSH 10/Debian 13 loga como "sshd-session"/"sshd-auth",
+    # não "sshd" puro).
+    cat > "$etc_prefix/filter.d/sshd.local" <<'EOF'
+[Definition]
+_daemon = sshd(?:-session|-auth)?
+EOF
+
+    cat > "$etc_prefix/jail.d/encha-sshd.local" <<EOF
+[sshd]
+enabled = true
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=ssh.service + _SYSTEMD_UNIT=sshd.service + _COMM=sshd + _COMM=sshd-session
+port = $portas
+banaction = iptables-multiport
+maxretry = 5
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.maxtime = 1d
+ignoreip = $ignoreip
+EOF
+
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        systemctl restart fail2ban > /dev/null 2>&1
+    else
+        systemctl enable --now fail2ban > /dev/null 2>&1
+    fi
+
+    # Confirma de verdade antes de gravar o marcador — NUNCA no escuro (ver
+    # o contrato em encha-setup-panel/src/lib/vps-context.ts, C8): o painel
+    # usa a presença de /root/dados_vps/seguranca como "SSH protegido",
+    # então gravar sem sucesso real mentiria pro operador.
+    local protegido=0
+    if fail2ban-client ping > /dev/null 2>&1 || systemctl is-active --quiet fail2ban 2>/dev/null; then
+        protegido=1
+    fi
+
+    if [ "$protegido" -ne 1 ]; then
+        echo -e "$(t instalar_protecao_ssh_falha_servico)"
+        return 1
+    fi
+
+    mkdir -p /root/dados_vps
+    printf 'fail2ban=ok\n' > /root/dados_vps/seguranca
+    chmod 644 /root/dados_vps/seguranca
+
+    echo -e "$(t instalar_protecao_ssh_sucesso "$portas")"
+    return 0
 }
 
 # Catálogo de idioma do menu principal (Fase 4 de i18n — i18n/GLOSSARY.md).
@@ -25781,6 +25942,9 @@ MSG_ES[menu_item_n8n_encha]="N8N Encha"
 MSG_PT[menu_item_enchat_free]="EnchaT Grátis"
 MSG_EN[menu_item_enchat_free]="EnchaT Free"
 MSG_ES[menu_item_enchat_free]="EnchaT Free"
+MSG_PT[menu_opcao_proteger_ssh]="Proteger SSH (fail2ban)"
+MSG_EN[menu_opcao_proteger_ssh]="Protect SSH (fail2ban)"
+MSG_ES[menu_opcao_proteger_ssh]="Proteger SSH (fail2ban)"
 MSG_PT[menu_opcao_atualizar_painel]="Atualizar painel"
 MSG_EN[menu_opcao_atualizar_painel]="Update panel"
 MSG_ES[menu_opcao_atualizar_painel]="Actualizar panel"
@@ -25985,6 +26149,7 @@ processar_menu_unlimited() {
     OPCOES[82]="Webtop"
     OPCOES[84]="$(t menu_item_enchat_free)"
     # outras opções
+    OPCOES[96]="$(t menu_opcao_proteger_ssh)" # Ação (C10): fail2ban idempotente
     OPCOES[97]="$(t menu_opcao_atualizar_painel)" # Ação: pull da imagem nova + redeploy
     OPCOES[98]="$(t menu_opcao_liberar_chatwoot)" # Ação, não instalação
     OPCOES[99]="$(t menu_opcao_verificar_status)" # Ação
@@ -26008,6 +26173,7 @@ processar_menu_unlimited() {
         
         echo -e "$(printf -- '-%.0s' {1..$(tput cols)})"
         # Menu inferior com ações fixas
+        printf "       ${amarelo_escuro}[ 96 ]${reset} - %-22s |\n" "${OPCOES[96]}"
         printf "       ${amarelo_escuro}[ 97 ]${reset} - %-22s |  ${amarelo_escuro}[ 98 ]${reset} - %-22s\n" "${OPCOES[97]}" "${OPCOES[98]}"
         printf "       ${amarelo_escuro}[ 99 ]${reset} - %-22s |  ${amarelo_escuro}[ V ]${reset} - %s\n" "${OPCOES[99]}" "${OPCOES[100]}"
         echo -e "$(printf -- '_%.0s' {1..$(tput cols)})"
@@ -26566,6 +26732,11 @@ processar_menu_unlimited() {
                     STACK_NAME="enchat"
                     ferramenta_enchat
                 fi
+                ;;
+            96)
+                instalar_protecao_ssh
+                echo "Aperte ENTER para retornar ao menu de ferramentas"
+                read
                 ;;
             97)
                 ferramenta_atualizar_painel
@@ -27559,7 +27730,22 @@ TEMPLATE
 }
 
 main() {
-    processar_menu_unlimited
+    # C10 (A2): "proteger-ssh" como primeiro argumento dispara
+    # instalar_protecao_ssh direto e sai — sem menu interativo. É o comando
+    # exato que o painel mostra (ssh-protection-warning.tsx,
+    # COMANDO_PROTEGER_SSH) quando /root/dados_vps/seguranca não existe, e
+    # também o que `bash /root/SetupEnchaAI proteger-ssh` roda numa VPS já
+    # instalada. Qualquer outro valor (ou nenhum) cai no menu de sempre —
+    # "$@" nunca chegava a ser usado aqui antes do C10.
+    case "${1:-}" in
+        proteger-ssh)
+            instalar_protecao_ssh
+            exit $?
+            ;;
+        *)
+            processar_menu_unlimited
+            ;;
+    esac
 }
 
 ## Executar função principal se o script for chamado diretamente
