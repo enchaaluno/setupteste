@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { StackCard, type CatalogEntry } from "@/components/stack-card";
 import { InstallWizard } from "@/components/wizard/install-wizard";
 import { SshInstallHint } from "@/components/ssh-install-hint";
-import { SshProtectionWarning } from "@/components/ssh-protection-warning";
+import { SshProtectionWarning, protecaoSshDaResposta } from "@/components/ssh-protection-warning";
 import { Input } from "@/components/ui/input";
 import { getCategoryLabel } from "@/lib/category-labels";
 import { Search, Boxes, X, AlertTriangle } from "lucide-react";
@@ -104,9 +104,8 @@ function CatalogPageInner() {
           email_ssl: d.email_ssl ?? "",
           url_portainer: d.url_portainer ?? "",
         });
-        // Campo ausente (painel mais antigo/rota mockada) fica no default
-        // "protegido" — nunca mostra um aviso indevido por falta do campo.
-        setSshProtected(typeof d.protecaoSshInstalada === "boolean" ? d.protecaoSshInstalada : true);
+        // Campo ausente fica no default "protegido" — ver protecaoSshDaResposta.
+        setSshProtected(protecaoSshDaResposta(d));
       })
       .catch((e) => console.error("[vps-context]", e));
   }, []);

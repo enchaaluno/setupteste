@@ -6,6 +6,7 @@ import {
   COMANDO_PROTEGER_SSH,
   SshProtectionWarning,
   deveExibirAvisoProtecaoSsh,
+  protecaoSshDaResposta,
 } from "./ssh-protection-warning";
 import { sshProtectionWarningText } from "./ssh-protection-warning.i18n";
 
@@ -29,6 +30,24 @@ describe("deveExibirAvisoProtecaoSsh", () => {
 
   it("null (ainda carregando /api/vps-context) -> não mostra", () => {
     expect(deveExibirAvisoProtecaoSsh(null)).toBe(false);
+  });
+});
+
+// Ligação resposta da API → estado do /catalog (auditoria C8: sem isto, ler
+// o campo errado ou inverter o default passava na suíte).
+describe("protecaoSshDaResposta", () => {
+  it("false na resposta -> false (mostra o aviso)", () => {
+    expect(protecaoSshDaResposta({ nome_servidor: "x", protecaoSshInstalada: false })).toBe(false);
+  });
+
+  it("true na resposta -> true", () => {
+    expect(protecaoSshDaResposta({ protecaoSshInstalada: true })).toBe(true);
+  });
+
+  it("campo ausente, de outro tipo ou resposta nula -> true (sem aviso)", () => {
+    expect(protecaoSshDaResposta({ nome_servidor: "x" })).toBe(true);
+    expect(protecaoSshDaResposta({ protecaoSshInstalada: "false" })).toBe(true);
+    expect(protecaoSshDaResposta(null)).toBe(true);
   });
 });
 

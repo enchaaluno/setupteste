@@ -17,6 +17,15 @@ export function deveExibirAvisoProtecaoSsh(protecaoInstalada: boolean | null): b
   return protecaoInstalada === false;
 }
 
+// Lê protecaoSshInstalada da resposta de GET /api/vps-context. Campo
+// ausente ou de outro tipo → true ("protegido", sem aviso): painel e rota
+// saem no mesmo build do Next, então ausência só acontece com rota
+// mockada/resposta inesperada — e o aviso é informativo, não bloqueia nada.
+export function protecaoSshDaResposta(d: unknown): boolean {
+  const v = (d as { protecaoSshInstalada?: unknown } | null)?.protecaoSshInstalada;
+  return typeof v === "boolean" ? v : true;
+}
+
 export function SshProtectionWarning({ protecaoInstalada }: { protecaoInstalada: boolean | null }) {
   const t = useDict(sshProtectionWarningText);
   const [copiado, setCopiado] = useState(false);
