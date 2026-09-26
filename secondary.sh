@@ -3454,7 +3454,7 @@ EOL
 Domain: https://$url_portainer
 Username: $USER_PORTAINER_FINAL
 Password: $pass_portainer
-Token: $TOKEN_PORTAINER_FINAL
+Token: aplicado
 EOL
   else
     cat > dados_portainer <<EOL
@@ -24224,7 +24224,7 @@ EOL
 Domain: https://$url_portainer
 Username: $USER_PORTAINER_FINAL
 Password: $pass_portainer
-Token: $TOKEN_PORTAINER_FINAL
+Token: aplicado
 EOL
   else
     cat > dados_portainer <<EOL
