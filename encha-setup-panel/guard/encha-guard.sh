@@ -42,7 +42,9 @@
 # contêiner. Um restart/replace do contêiner (deploy, update, OOM, reboot)
 # não deve abrir a janela de exposição de novo só porque o processo antigo
 # saiu. Por isso este script NUNCA registra um `trap` de limpeza em
-# SIGTERM/EXIT — isso é intencional e não é um esquecimento.
+# SIGTERM/EXIT — isso é intencional e não é um esquecimento. O único trap é
+# o de sair (encerrar_sem_limpar, no loop principal), que só encerra o
+# processo e nunca chama o nft.
 
 set -u
 # Sem expansão de curinga: a lista de pares é quebrada em itens por expansão
@@ -287,9 +289,9 @@ montar_ruleset() {
 
 # --- loop principal ----------------------------------------------------------
 
-# `sleep 60 &` + `wait` em vez de `sleep 60` bloqueante: um SIGTERM chega ao
-# `wait` na hora (o `sleep` filho recebe o sinal e morre, o `wait` retorna),
-# em vez de esperar o intervalo inteiro antes do contêiner conseguir parar.
+# `sleep 60 &` + `wait` em vez de `sleep 60` bloqueante: com o trap de
+# TERM/INT registrado (encerrar_sem_limpar), o sinal interrompe o `wait` na
+# hora e o processo sai, em vez de esperar o intervalo inteiro.
 dormir_intervalo() {
   sleep 60 &
   wait "$!" 2>/dev/null
@@ -413,7 +415,19 @@ aplicar_se_necessario() {
   return 0
 }
 
+# Trap de TERM/INT: SÓ encerra — nunca remove a tabela (ver cabeçalho). Sem
+# ele, o SIGTERM do `docker stop`/update do Swarm era ignorado: no contêiner,
+# este script é o PID 1, e o kernel não entrega ao PID 1 sinal cuja ação é a
+# padrão. Conferido na VPS de teste: `docker stop -t 15` levava 16s e
+# terminava em SIGKILL (137); cada update/reinício do serviço esperava o
+# stop_grace_period inteiro.
+encerrar_sem_limpar() {
+  log "sinal de encerramento recebido — saindo SEM remover a tabela (as regras ficam no kernel do host)."
+  exit 0
+}
+
 loop_principal() {
+  trap encerrar_sem_limpar TERM INT
   log "iniciando — checagem a cada ~60s. A tabela nunca é removida ao sair (regras vivem no kernel do host)."
   ruleset_completo_do_processo=""
   ruleset_sem_pares_do_processo=""

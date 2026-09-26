@@ -631,6 +631,21 @@ else
   falha "falha fechada: a versão completa não voltou depois que o nft passou a aceitar"
 fi
 
+# 8g. PID 1: no contêiner o script é o PID 1, e o kernel descarta sinal para
+# o PID 1 cuja ação é a padrão — sem um trap, o SIGTERM do `docker stop` era
+# ignorado e cada update esperava o stop_grace_period inteiro até o SIGKILL
+# (medido na VPS: 15s/137 sem trap, 0s/0 com). Isso não dá para reproduzir
+# fora de um namespace de PID, então aqui a checagem é estrutural: há trap
+# de TERM, e o handler só encerra — nunca chama o nft (o 8b já prova, pelo
+# comportamento, que o SIGTERM não remove a tabela).
+corpo_handler="$(sed -n '/^encerrar_sem_limpar() {/,/^}/p' "$SCRIPT")"
+if grep -Eq '^[[:space:]]*trap encerrar_sem_limpar TERM' "$SCRIPT" && [ -n "$corpo_handler" ] \
+    && ! printf '%s\n' "$corpo_handler" | grep -q 'nft'; then
+  ok "PID 1: trap de TERM registrado, e o handler só encerra (não chama o nft)"
+else
+  falha "PID 1: sem trap de TERM (o docker stop espera o SIGKILL) ou o handler chama o nft"
+fi
+
 echo ""
 [ "$falhas" -eq 0 ] || exit 1
 echo "✅ todos os testes de encha-guard.sh passaram"
