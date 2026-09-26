@@ -43,16 +43,24 @@
 # (default "22"). Cada porta é validada como inteiro decimal canônico 1-65535
 # — a mesma disciplina defensiva das outras entradas de operador (formato +
 # faixa numérica, nunca só a forma); a que não bater é DESCARTADA e logada,
-# nunca interpolada crua no "nft -f -". Gera uma regra de LIMITE DE TAXA (não
-# um drop incondicional, que derrubaria o SSH de verdade):
-#   tcp dport { <portas> } ct state new limit rate over 20/minute burst 30 packets drop
+# nunca interpolada crua no "nft -f -". Gera regras de LIMITE DE TAXA POR IP
+# DE ORIGEM (não um drop incondicional, que derrubaria o SSH de verdade):
+#   tcp dport { <portas> } ct state new update @ssh_limite4 { ip saddr limit rate over 20/minute burst 30 packets } drop
+#   (e o mesmo para IPv6, agrupando a origem por /64 em @ssh_limite6)
 # "ct state new" é CRÍTICO e nunca pode ser removido: sem ele, o limite se
 # aplicaria a todo pacote de QUALQUER sessão SSH, inclusive as já
 # autenticadas e abertas — derrubando uso normal, não só tentativas de força
 # bruta. Com "ct state new", só a TAXA DE NOVAS TENTATIVAS DE CONEXÃO é
-# limitada; sessões já estabelecidas nunca são afetadas. Lista vazia (todas
-# inválidas, ou ENCHA_GUARD_SSH_PORTAS="" explícito) => a regra é omitida do
-# ruleset, como pares4/pares6 já fazem quando não têm elemento nenhum.
+# limitada; sessões já estabelecidas nunca são afetadas (medido no kernel real
+# da VPS de teste: sem "ct state new", uma sessão aberta teve 19 pacotes
+# descartados; com ele, zero). O balde é POR ORIGEM (set dinâmico), nunca um
+# só balde global: com um limite global, qualquer robô de força bruta gastava
+# as 20 conexões/minuto de TODO MUNDO e o próprio operador ficava sem
+# conseguir entrar por SSH durante o ataque (medido: 2 de 5 tentativas do IP
+# legítimo passaram com o limite global; 5 de 5 com o limite por IP). Lista
+# vazia (todas inválidas, ou ENCHA_GUARD_SSH_PORTAS="" explícito) => as regras
+# e os sets são omitidos do ruleset, como pares4/pares6 já fazem quando não
+# têm elemento nenhum.
 #
 # IMPORTANTE — nunca apagar a tabela ao encerrar: as regras vivem no kernel
 # do HOST (rede `host`, contêiner sem net namespace próprio), não no
@@ -316,6 +324,7 @@ gerar_ruleset() {
 montar_ruleset() {
   IPV4_VALIDOS="$1"
   IPV6_VALIDOS="$2"
+  coletar_portas_ssh
 
   echo 'table inet encha_guard {}'
   echo 'delete table inet encha_guard'
@@ -331,6 +340,19 @@ montar_ruleset() {
     echo "  set pares6 { type ipv6_addr; flags interval; auto-merge; elements = { $elementos6 }; }"
   fi
 
+  # Baldes do limite de SSH, um por origem (C7). size = teto de memória no
+  # kernel (entrada não autenticada alimenta o set); cheio, a regra
+  # simplesmente não casa para origens novas — o SSH segue com a própria
+  # autenticação, nada é derrubado. timeout 2m com "update" (renova a cada
+  # tentativa): o balde de quem continua tentando nunca é recriado cheio, e o
+  # de quem parou some depois que já teria se recarregado (30 fichas a
+  # 20/min = 90s). O conteúdo destes dois sets muda a cada conexão SSH — ver
+  # normalizar_ruleset, que os ignora na comparação.
+  if [ -n "$PORTAS_SSH_VALIDAS" ]; then
+    echo '  set ssh_limite4 { type ipv4_addr; size 65535; flags dynamic,timeout; timeout 2m; }'
+    echo '  set ssh_limite6 { type ipv6_addr; size 65535; flags dynamic,timeout; timeout 2m; }'
+  fi
+
   echo '  chain entrada {'
   echo '    type filter hook input priority -5; policy accept;'
   echo '    iif "lo" accept'
@@ -340,15 +362,18 @@ montar_ruleset() {
   if [ -n "$IPV6_VALIDOS" ]; then
     echo '    ip6 saddr @pares6 accept'
   fi
-  # C7 (achado A2): limite de taxa de NOVAS conexões SSH por IP de origem —
-  # nunca um drop incondicional. "ct state new" restringe o limite à taxa de
-  # tentativas de conexão; sem ele, toda sessão SSH já aberta (inclusive uso
-  # interativo normal) cairia sob o mesmo limite. Omitida quando não há
-  # nenhuma porta válida (ver coletar_portas_ssh).
-  coletar_portas_ssh
+  # C7 (achado A2): limite de taxa de NOVAS conexões SSH POR IP DE ORIGEM
+  # (IPv6 agrupado por /64 — um /64 inteiro costuma ser de uma só máquina, e
+  # por endereço exato o atacante trocaria de IP a cada tentativa) — nunca um
+  # drop incondicional, nunca um balde global (ver cabeçalho). "ct state new"
+  # restringe o limite à taxa de tentativas de conexão; sem ele, toda sessão
+  # SSH já aberta cairia sob o mesmo limite. Depois dos accepts de lo e dos
+  # pares: IP da allowlist nunca é limitado. Omitida quando não há nenhuma
+  # porta válida (ver coletar_portas_ssh).
   if [ -n "$PORTAS_SSH_VALIDAS" ]; then
     portas_ssh_fmt="$(printf '%s' "$PORTAS_SSH_VALIDAS" | tr ' ' ',')"
-    echo "    tcp dport { $portas_ssh_fmt } ct state new limit rate over 20/minute burst 30 packets drop"
+    echo "    tcp dport { $portas_ssh_fmt } ct state new update @ssh_limite4 { ip saddr limit rate over 20/minute burst 30 packets } drop"
+    echo "    tcp dport { $portas_ssh_fmt } ct state new update @ssh_limite6 { ip6 saddr and ffff:ffff:ffff:ffff:: limit rate over 20/minute burst 30 packets } drop"
   fi
   echo '    tcp dport { 2377, 7946 } counter drop'
   echo '    udp dport { 4789, 7946 } counter drop'
@@ -373,9 +398,22 @@ tabela_existe() {
 # Normaliza a LISTAGEM do nft (`nft list table ...`) para comparar conteúdo,
 # não texto cru: tira "# handle N" (mudam a cada aplicação), troca
 # "counter packets N bytes M" por "counter" (sobem a cada pacote descartado)
-# e descarta espaço no fim e linhas vazias.
+# e descarta espaço no fim e linhas vazias. Descarta também o "elements = {
+# ... }" dos sets dinâmicos do limite de SSH (ssh_limite4/ssh_limite6): o
+# kernel acrescenta um elemento por origem a cada tentativa de conexão SSH,
+# com "expires" contando para baixo — sem isto, qualquer SSH nos últimos 2
+# minutos fazia a tabela parecer "alterada", e o loop a recriava a cada
+# ciclo, zerando os baldes de todo mundo (o atacante ganhava 30 tentativas
+# novas por minuto) e logando a cada 60s. Os elementos de pares4/pares6 (a
+# allowlist) continuam na comparação.
 normalizar_ruleset() {
-  sed -E -e 's/#[[:space:]]*handle[[:space:]]+[0-9]+//g' \
+  awk '
+    /^[[:space:]]*set ssh_limite[46] [{]/ { dinamico = 1 }
+    dinamico && /^[[:space:]]*elements = [{]/ { pulando = 1 }
+    pulando { if ($0 ~ /[}][[:space:]]*$/) pulando = 0; next }
+    dinamico && /^[[:space:]]*[}][[:space:]]*$/ { dinamico = 0 }
+    { print }
+  ' | sed -E -e 's/#[[:space:]]*handle[[:space:]]+[0-9]+//g' \
     -e 's/counter packets [0-9]+ bytes [0-9]+/counter/g' \
     -e 's/[[:space:]]+$//' | grep -v '^[[:space:]]*$'
 }

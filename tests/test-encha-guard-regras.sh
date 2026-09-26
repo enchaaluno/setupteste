@@ -94,11 +94,40 @@ case "$*" in
     n="$(cat "$d/contador" 2>/dev/null || echo 0)"
     n=$((n + 1))
     echo "$n" > "$d/contador"
+    # Como o nft real, lista cada "set" em várias linhas. Com
+    # "$d/trafego_ssh" presente, os sets dinâmicos do limite de SSH ganham
+    # elementos que mudam a CADA leitura (origem nova, "expires" contando),
+    # no formato exato do nft 1.0.9 real (conferido na VPS de teste),
+    # inclusive quebrados em duas linhas como o nft faz com lista longa.
+    trafego=0
+    [ -f "$d/trafego_ssh" ] && trafego=1
+    awk -v n="$n" -v trafego="$trafego" '
+      /^\tset [a-z0-9_]+ [{] .*[}]$/ {
+        nome = $2
+        corpo = $0
+        sub(/^\tset [a-z0-9_]+ [{] */, "", corpo)
+        sub(/ *[}]$/, "", corpo)
+        print "\tset " nome " {"
+        k = split(corpo, partes, ";")
+        for (i = 1; i <= k; i++) {
+          p = partes[i]
+          gsub(/^ +| +$/, "", p)
+          if (p != "") print "\t\t" p
+        }
+        if (trafego == 1 && nome ~ /^ssh_limite/) {
+          print "\t\telements = { 198.51.100." n " limit rate over 20/minute burst 30 packets expires 1m" (59 - n % 59) "s908ms,"
+          print "\t\t\t     203.0.113.9 limit rate over 20/minute burst 30 packets expires 1m" n "s568ms }"
+        }
+        print "\t}"
+        next
+      }
+      { print }
+    ' "$d/tabela" > "$d/listagem"
     if [ "$1" = "-a" ]; then
       sed -e "s/counter drop/counter packets $n bytes $((n * 60)) drop # handle $((n + 7))/" \
-        -e "s/accept\$/accept # handle $((n + 3))/" "$d/tabela"
+        -e "s/accept\$/accept # handle $((n + 3))/" "$d/listagem"
     else
-      sed -e "s/counter drop/counter packets $n bytes $((n * 60)) drop/" "$d/tabela"
+      sed -e "s/counter drop/counter packets $n bytes $((n * 60)) drop/" "$d/listagem"
     fi
     exit 0
     ;;
@@ -659,11 +688,36 @@ saida_ssh_default="$(
   unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
   renderizar
 )"
-if echo "$saida_ssh_default" | grep -qF 'tcp dport { 22 } ct state new limit rate over 20/minute burst 30 packets drop'; then
-  ok "SSH: default (sem env var) -> porta 22, ct state new, limit rate over 20/minute burst 30 packets drop"
+if echo "$saida_ssh_default" | grep -qF 'tcp dport { 22 } ct state new update @ssh_limite4 { ip saddr limit rate over 20/minute burst 30 packets } drop'; then
+  ok "SSH: default (sem env var) -> porta 22, ct state new, 20/minute burst 30 POR IPv4 de origem"
 else
-  falha "SSH: default não gerou a regra esperada (porta 22, ct state new, limite do plano)"
+  falha "SSH: default não gerou a regra IPv4 esperada (porta 22, ct state new, balde por origem, limite do plano)"
   echo "$saida_ssh_default" | grep 'ct state'
+fi
+if echo "$saida_ssh_default" | grep -qF 'tcp dport { 22 } ct state new update @ssh_limite6 { ip6 saddr and ffff:ffff:ffff:ffff:: limit rate over 20/minute burst 30 packets } drop'; then
+  ok "SSH: default -> mesma regra para IPv6, balde por /64 de origem"
+else
+  falha "SSH: default não gerou a regra IPv6 esperada (balde por /64 de origem)"
+  echo "$saida_ssh_default" | grep 'ct state'
+fi
+
+# 9a'. Balde POR ORIGEM, nunca global (achado da auditoria C7): um "limit
+# rate" solto na regra é um balde único para a Internet inteira — o robô de
+# força bruta gasta as 20/min de todo mundo e o operador fica sem SSH durante
+# o ataque (medido no kernel real: 2 de 5 tentativas do IP legítimo passaram
+# com o limite global, 5 de 5 com o limite por IP). Todo "limit rate" do
+# ruleset tem que estar DENTRO de um "update @ssh_limite* { <origem> ... }".
+if printf '%s\n' "$saida_ssh_default" | grep 'limit rate' | grep -vq 'update @ssh_limite[46] { ip6\{0,1\} saddr '; then
+  falha "SSH: há 'limit rate' fora de um set dinâmico por origem — balde GLOBAL, o atacante tranca o operador para fora"
+  printf '%s\n' "$saida_ssh_default" | grep 'limit rate'
+else
+  ok "SSH: todo 'limit rate' é por origem (update @ssh_limite4/6), nunca um balde global"
+fi
+if echo "$saida_ssh_default" | grep -qF 'set ssh_limite4 { type ipv4_addr; size 65535; flags dynamic,timeout; timeout 2m; }' \
+    && echo "$saida_ssh_default" | grep -qF 'set ssh_limite6 { type ipv6_addr; size 65535; flags dynamic,timeout; timeout 2m; }'; then
+  ok "SSH: sets dos baldes declarados com teto de memória (size) e expiração (timeout 2m)"
+else
+  falha "SSH: sets ssh_limite4/ssh_limite6 ausentes ou sem size/timeout (memória do kernel sem teto)"
 fi
 
 # 9b. Duas portas, espaço OU vírgula como separador (mesmo padrão de
@@ -737,8 +791,8 @@ saida_ssh_vazio="$(
   export ENCHA_GUARD_SSH_PORTAS
   renderizar
 )"
-if echo "$saida_ssh_vazio" | grep -q 'ct state new'; then
-  falha "SSH: ENCHA_GUARD_SSH_PORTAS=\"\" deveria remover a regra de rate-limit, mas ela apareceu"
+if echo "$saida_ssh_vazio" | grep -q 'ct state new\|ssh_limite'; then
+  falha "SSH: ENCHA_GUARD_SSH_PORTAS=\"\" deveria remover a regra de rate-limit (e os sets), mas apareceu"
 else
   ok "SSH: ENCHA_GUARD_SSH_PORTAS=\"\" (vazio explícito) remove a regra de rate-limit"
 fi
@@ -755,15 +809,23 @@ fi
 # do rate-limit — não apenas em algum lugar do arquivo, mas antes do "limit
 # rate" daquela linha. Esta é a prova de mutação: um "ct state new" removido
 # do gerador faria esta asserção falhar imediatamente.
-linha_regra_ssh="$(printf '%s\n' "$saida_ssh_default" | grep 'limit rate over 20/minute')"
-case "$linha_regra_ssh" in
-  *'ct state new'*'limit rate over 20/minute burst 30 packets drop'*)
-    ok "regressão C7: a regra de rate-limit SSH contém 'ct state new' antes do 'limit rate' (sessões já abertas não são afetadas)"
-    ;;
-  *)
-    falha "regressão C7: 'ct state new' ausente (ou fora de ordem) na regra de rate-limit SSH — sessões SSH já abertas cairiam sob o limite"
-    ;;
-esac
+# Linha a linha (IPv4 E IPv6): tirar de uma só das duas também tem que falhar.
+regras_limite=0
+regras_sem_ct_new=0
+while IFS= read -r linha_regra_ssh; do
+  regras_limite=$((regras_limite + 1))
+  case "$linha_regra_ssh" in
+    *'ct state new'*'limit rate over 20/minute burst 30 packets'*' drop') : ;;
+    *) regras_sem_ct_new=$((regras_sem_ct_new + 1)) ;;
+  esac
+done <<EOF_REGRAS_SSH
+$(printf '%s\n' "$saida_ssh_default" | grep 'limit rate')
+EOF_REGRAS_SSH
+if [ "$regras_limite" -eq 2 ] && [ "$regras_sem_ct_new" -eq 0 ]; then
+  ok "regressão C7: as 2 regras de rate-limit SSH (IPv4 e IPv6) contêm 'ct state new' antes do 'limit rate' (sessões já abertas não são afetadas)"
+else
+  falha "regressão C7: 'ct state new' ausente (ou fora de ordem) em $regras_sem_ct_new de $regras_limite regra(s) de rate-limit SSH — sessões SSH já abertas cairiam sob o limite"
+fi
 
 # 9f. Ordem: a regra de rate-limit SSH vem ANTES dos drops fixos de
 # 2377/7946/4789 (leitura lógica: lo -> pares -> rate-limit SSH -> drops).
@@ -773,6 +835,54 @@ if [ -n "$pos_ssh" ] && [ -n "$pos_drop_swarm" ] && [ "$pos_ssh" -lt "$pos_drop_
   ok "SSH: a regra de rate-limit vem antes dos drops fixos de 2377/7946/4789"
 else
   falha "SSH: a regra de rate-limit não vem antes dos drops fixos (ssh=$pos_ssh drop=$pos_drop_swarm)"
+fi
+
+# 9h. Idempotência com tráfego SSH (achado da auditoria C7): o kernel põe um
+# elemento por origem nos sets ssh_limite4/6 a cada tentativa de SSH, com
+# "expires" contando — a listagem muda sozinha. Se a comparação do loop não
+# ignorar isso, a tabela é recriada a cada ciclo de 60s: os baldes de todo
+# mundo zeram (o atacante ganha 30 tentativas novas por minuto) e o log
+# enche. Com tráfego SSH contínuo, em ~7 ciclos, exatamente 1 aplicação.
+dir_trafego="$TMP_TESTE/loop-trafego-ssh"
+mkdir -p "$dir_trafego"
+: > "$dir_trafego/trafego_ssh"
+(
+  unset ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
+  ENCHA_GUARD_PEERS="10.0.0.5,10.0.0.6"
+  export ENCHA_GUARD_PEERS
+  rodar_loop 1.4 "$dir_trafego"
+)
+aplicacoes="$(conta_chamadas "$dir_trafego" '-f -')"
+if [ "$aplicacoes" -eq 1 ]; then
+  ok "loop: tráfego SSH (elementos dos baldes mudando) não faz a tabela ser reaplicada (1 aplicação em ~7 ciclos)"
+else
+  falha "loop: tráfego SSH fez a tabela ser reaplicada a cada ciclo ($aplicacoes aplicações) — os baldes do limite zeram a cada minuto"
+fi
+
+# ...mas ignorar os baldes não pode cegar a comparação para a ALLOWLIST: um
+# elemento de pares4 trocado por fora ainda é "tabela alterada" e volta.
+dir_pares_mexidos="$TMP_TESTE/loop-pares-mexidos"
+mkdir -p "$dir_pares_mexidos"
+: > "$dir_pares_mexidos/chamadas"
+: > "$dir_pares_mexidos/trafego_ssh"
+(
+  unset ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS ENCHA_GUARD_PERMITIR
+  ENCHA_GUARD_PEERS="10.0.0.5"
+  export ENCHA_GUARD_PEERS
+  FAKE_NFT_DIR="$dir_pares_mexidos" sob_teste 2>"$dir_pares_mexidos/stderr" &
+  pid=$!
+  "$REAL_SLEEP" 0.7
+  sed 's/10\.0\.0\.5/10.0.0.99/' "$dir_pares_mexidos/tabela" > "$dir_pares_mexidos/tabela.novo"
+  mv "$dir_pares_mexidos/tabela.novo" "$dir_pares_mexidos/tabela"
+  "$REAL_SLEEP" 0.7
+  kill -TERM "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+)
+aplicacoes="$(conta_chamadas "$dir_pares_mexidos" '-f -')"
+if [ "$aplicacoes" -eq 2 ] && grep -qF '10.0.0.5' "$dir_pares_mexidos/tabela" 2>/dev/null; then
+  ok "loop: allowlist (pares4) alterada por fora ainda é detectada e restaurada, mesmo com os baldes ignorados"
+else
+  falha "loop: allowlist alterada por fora não foi restaurada ($aplicacoes aplicações) — a normalização escondeu demais"
 fi
 
 # 9g. Sintaxe real (nft -c), se disponível — mesmo guard de disponibilidade
