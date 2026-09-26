@@ -204,6 +204,18 @@ else
   falha "filter.d/sshd.local ausente ou sem o override de _daemon esperado"
 fi
 
+# ListenAddress com porta explícita (auditoria C10): o sshd escuta só na
+# 2222, mas `sshd -T` ainda imprime "port 22" — a porta da listenaddress
+# tem que entrar no jail, senão o banimento cai na porta errada.
+ETC_LA="$(mktemp -d)"; DV_LA="$(mktemp -d)"
+FAKE_SSHD_T=$'port 22\nlistenaddress 0.0.0.0:2222\nlistenaddress [::]:2222' FAKE_SYSTEMCTL_ATIVO=1 \
+  rodar "$ETC_LA" "$DV_LA" "$DV_LA/saida.log"
+if grep -q '^port = 22,2222$' "$ETC_LA/jail.d/encha-sshd.local" 2>/dev/null; then
+  ok "ListenAddress 0.0.0.0:2222 (IPv4 e IPv6): 2222 entra no jail, sem duplicata"
+else
+  falha "ListenAddress com porta não entrou no jail: $(grep '^port' "$ETC_LA/jail.d/encha-sshd.local" 2>/dev/null)"
+fi
+
 # ============================================================
 # 4. Fallback de porta pra 22 quando sshd -T não devolve nada
 # ============================================================

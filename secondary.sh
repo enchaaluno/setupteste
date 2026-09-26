@@ -25850,9 +25850,17 @@ instalar_protecao_ssh() {
     # Porta(s) real(is) do sshd — sshd -T pode listar "port" mais de uma vez
     # se houver múltiplas linhas "Port" no sshd_config; junta todas
     # separadas por vírgula (fail2ban aceita "port = 22,2222" no jail).
+    # As linhas "listenaddress host:porta" também entram (auditoria C10):
+    # com "ListenAddress 0.0.0.0:2222" o sshd escuta SÓ na 2222 mas o
+    # `sshd -T` continua dizendo "port 22" — conferido no OpenSSH 10 da VPS
+    # de teste; só com "port" o banimento cairia na porta errada e não
+    # bloquearia nada. Só números entram; sem duplicatas.
     # Fallback pra 22 se sshd -T não devolver nada (ex.: ambiente sem sshd).
     local portas
-    portas="$(sshd -T 2>/dev/null | awk '/^port /{print $2}' | paste -sd, -)"
+    portas="$(sshd -T 2>/dev/null | awk '
+        /^port [0-9]+$/ { print $2 }
+        /^listenaddress / { n = split($2, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }
+    ' | sort -un | paste -sd, -)"
     [ -z "$portas" ] && portas="22"
 
     # IP de quem está conectado agora, se descobrível — nunca quebra a
