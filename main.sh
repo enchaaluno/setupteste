@@ -1470,6 +1470,35 @@ MSG_PT[mostrar_resumo_suporte]="${ciano}${negrito}Suporte:${reset}"
 MSG_EN[mostrar_resumo_suporte]="${ciano}${negrito}Support:${reset}"
 MSG_ES[mostrar_resumo_suporte]="${ciano}${negrito}Soporte:${reset}"
 
+# C10 (achado A2 do plano de segurança): avisos de segurança do SSH no
+# resumo final. O primeiro só aparece se instalar_protecao_ssh (chamada
+# antes desta função) tiver falhado — nunca se PROTECAO_SSH_OK=1. O comando
+# citado é IDÊNTICO a COMANDO_PROTEGER_SSH em
+# encha-setup-panel/src/components/ssh-protection-warning.tsx (o aviso
+# equivalente do painel, achado C8) — não mude um lado sem o outro. Os
+# outros dois (senha/root) são independentes do fail2ban e checam
+# `sshd -T` de novo aqui, porque a decisão de desabilitar é sempre manual
+# (nunca automatizada — ver o comentário de instalar_protecao_ssh).
+MSG_PT[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ Proteção do SSH:${reset}"
+MSG_EN[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ SSH protection:${reset}"
+MSG_ES[mostrar_resumo_fail2ban_titulo]="${amarelo}${negrito}⚠ Protección del SSH:${reset}"
+
+MSG_PT[mostrar_resumo_fail2ban_aviso]="  ${amarelo}O fail2ban não pôde ser instalado automaticamente. O guarda do Swarm continua limitando novas conexões, mas para o banimento prolongado rode depois:${reset}"
+MSG_EN[mostrar_resumo_fail2ban_aviso]="  ${amarelo}fail2ban could not be installed automatically. The Swarm guard keeps limiting new connections, but for extended banning run this later:${reset}"
+MSG_ES[mostrar_resumo_fail2ban_aviso]="  ${amarelo}fail2ban no pudo instalarse automáticamente. El guarda del Swarm sigue limitando conexiones nuevas, pero para el bloqueo prolongado ejecute esto después:${reset}"
+
+MSG_PT[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI proteger-ssh${reset}"
+MSG_EN[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI proteger-ssh${reset}"
+MSG_ES[mostrar_resumo_fail2ban_comando]="  ${cinza}bash /root/SetupEnchaAI proteger-ssh${reset}"
+
+MSG_PT[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}O SSH ainda aceita login por senha. Recomendado (só depois de confirmar que sua chave SSH funciona): edite /etc/ssh/sshd_config, defina 'PasswordAuthentication no' e rode 'systemctl restart ssh'.${reset}"
+MSG_EN[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}SSH still accepts password login. Recommended (only after confirming your SSH key works): edit /etc/ssh/sshd_config, set 'PasswordAuthentication no' and run 'systemctl restart ssh'.${reset}"
+MSG_ES[mostrar_resumo_ssh_senha_aviso]="  ${amarelo}El SSH todavía acepta login por contraseña. Recomendado (solo después de confirmar que su clave SSH funciona): edite /etc/ssh/sshd_config, defina 'PasswordAuthentication no' y ejecute 'systemctl restart ssh'.${reset}"
+
+MSG_PT[mostrar_resumo_ssh_root_aviso]="  ${amarelo}O SSH ainda permite login direto como root. Recomendado (use um usuário com sudo): edite /etc/ssh/sshd_config, defina 'PermitRootLogin no' e rode 'systemctl restart ssh'.${reset}"
+MSG_EN[mostrar_resumo_ssh_root_aviso]="  ${amarelo}SSH still allows direct root login. Recommended (use a user with sudo): edit /etc/ssh/sshd_config, set 'PermitRootLogin no' and run 'systemctl restart ssh'.${reset}"
+MSG_ES[mostrar_resumo_ssh_root_aviso]="  ${amarelo}El SSH todavía permite login directo como root. Recomendado (use un usuario con sudo): edite /etc/ssh/sshd_config, defina 'PermitRootLogin no' y ejecute 'systemctl restart ssh'.${reset}"
+
 mostrar_resumo_final() {
     clear
     echo -e "${negrito}${verde}"
@@ -1492,6 +1521,28 @@ mostrar_resumo_final() {
     echo -e "$(t mostrar_resumo_passo1)"
     echo -e "$(t mostrar_resumo_passo2)"
     echo -e "$(t mostrar_resumo_passo3)"
+
+    # C10 (achado A2): avisos de segurança do SSH — só aparecem quando há
+    # algo pendente (nenhum aqui significa nenhuma linha extra no resumo).
+    local avisos_ssh=0
+    if [ "${PROTECAO_SSH_OK:-0}" != "1" ]; then
+        echo ""
+        echo -e "$(t mostrar_resumo_fail2ban_titulo)"
+        echo -e "$(t mostrar_resumo_fail2ban_aviso)"
+        echo -e "$(t mostrar_resumo_fail2ban_comando)"
+        avisos_ssh=1
+    fi
+    if sshd -T 2>/dev/null | grep -qi '^passwordauthentication yes'; then
+        [ "$avisos_ssh" -eq 0 ] && echo "" && echo -e "$(t mostrar_resumo_fail2ban_titulo)"
+        echo -e "$(t mostrar_resumo_ssh_senha_aviso)"
+        avisos_ssh=1
+    fi
+    if sshd -T 2>/dev/null | grep -qi '^permitrootlogin yes'; then
+        [ "$avisos_ssh" -eq 0 ] && echo "" && echo -e "$(t mostrar_resumo_fail2ban_titulo)"
+        echo -e "$(t mostrar_resumo_ssh_root_aviso)"
+        avisos_ssh=1
+    fi
+
     echo ""
     echo -e "$(t mostrar_resumo_suporte)"
     echo -e "  ${azul}📧 atendimento@encha.ai${reset}"
@@ -1560,6 +1611,16 @@ MSG_PT[execucao_falha_painel]="Falha ao instalar o painel. Verifique 'docker ser
 MSG_EN[execucao_falha_painel]="Failed to install the panel. Check 'docker service ls' and 'docker stack ps encha-panel'."
 MSG_ES[execucao_falha_painel]="Fallo al instalar el panel. Verifique 'docker service ls' y 'docker stack ps encha-panel'."
 
+# C10 (achado A2 do plano de segurança): fail2ban de verdade pro SSH,
+# instalado automaticamente em toda instalação NOVA (os dois caminhos acima
+# — infra completa e só painel — convergem aqui antes do resumo final). Ver
+# instalar_protecao_ssh em secondary.sh para o contrato completo; falha aqui
+# NUNCA aborta a instalação (é uma camada a mais sobre o guarda automático
+# do Swarm, A1/C4-C7) — só avisa no resumo final com o comando manual.
+MSG_PT[execucao_protegendo_ssh]="🛡️ PROTEGENDO O SSH (fail2ban)"
+MSG_EN[execucao_protegendo_ssh]="🛡️ PROTECTING SSH (fail2ban)"
+MSG_ES[execucao_protegendo_ssh]="🛡️ PROTEGIENDO EL SSH (fail2ban)"
+
 # ───────── EXECUÇÃO ─────────
 
 banner_instalacao_completa
@@ -1626,6 +1687,16 @@ barra_meio
 if ! ferramenta_encha_panel; then
     status_fail "$(t execucao_falha_painel)"
     exit 1
+fi
+
+echo ""
+barra_meio
+echo -e "${roxo}${negrito}$(t execucao_protegendo_ssh)${reset}"
+barra_meio
+if instalar_protecao_ssh; then
+    PROTECAO_SSH_OK=1
+else
+    PROTECAO_SSH_OK=0
 fi
 
 mostrar_resumo_final
