@@ -653,4 +653,41 @@ else
   falha "migrado + secret apagado: esperado RC=1 sem deploy e aviso segredo_inacessivel, obtido '$saida'"
 fi
 
+# ============================================================
+# Cenário 11 (auditoria C9): usuário do admin CONHECIDO, senha vazia e
+# nenhuma migração registrada -> "sem admin" (o cenário 6 só cobria o
+# usuário vazio, então tirar a metade "senha" da guarda passava).
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="credenciais-arquivo"
+FAKE_STACK_EXISTS=true
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""}]'
+
+saida="$(rodar_deploy "0.3.5")"
+if [ "$saida" = "RC=1" ] && [ ! -s "$CAPTURED_ENV_FILE" ]; then
+  ok "usuário conhecido, sem senha e sem migração: não faz deploy"
+else
+  falha "usuário conhecido, sem senha e sem migração: esperado RC=1 sem deploy, obtido '$saida', env enviado: $(cat "$CAPTURED_ENV_FILE" 2>/dev/null)"
+fi
+
+# ============================================================
+# Cenário 12 (auditoria C9): senha nova digitada, mas o PUT da stack FALHA
+# -> nenhuma versão antiga é removida (a stack continua usando a anterior).
+# ============================================================
+novo_cenario
+FAKE_IMAGE_LABEL="credenciais-arquivo"
+FAKE_STACK_EXISTS=true
+FAKE_PUT_HTTP="500"
+FAKE_CURRENT_ENV_JSON='[{"name":"PANEL_ADMIN_USER","value":"admin"},{"name":"PANEL_ADMIN_PASSWORD","value":""},{"name":"PANEL_ADMIN_PASSWORD_SECRET_NAME","value":"panel_admin_password_ANTERIOR"}]'
+echo "panel_admin_password_ANTERIOR" >> "$FAKE_SECRETS_FILE"
+echo "panel_admin_password_ANTERIOR com.encha.segredo-base=panel_admin_password" >> "$FAKE_SECRETS_LABELS_FILE"
+user_painel="admin"; pass_painel="NovaSenha000"
+
+saida="$(rodar_deploy "0.3.5")"
+if [ "$saida" = "RC=1" ] && grep -qxF "panel_admin_password_ANTERIOR" "$FAKE_SECRETS_FILE"; then
+  ok "PUT da stack falhou: a versão em uso (ANTERIOR) continua existindo"
+else
+  falha "PUT da stack falhou: esperado RC=1 e ANTERIOR preservada, obtido '$saida', secrets: $(cat "$FAKE_SECRETS_FILE")"
+fi
+
 [ "$falhas" -eq 0 ] || exit 1
