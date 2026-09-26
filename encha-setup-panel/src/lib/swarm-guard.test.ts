@@ -13,6 +13,46 @@ const baseArgs: MontarSpecGuardaArgs = {
 };
 
 describe("montarSpecGuarda", () => {
+  // Spec INTEIRO, campo a campo, com toStrictEqual: os testes por campo
+  // abaixo não pegam um campo NOVO (ex.: um Mount do docker.sock, um label
+  // de stack no ContainerSpec, EndpointSpec com porta publicada) — este pega
+  // qualquer acréscimo, remoção ou troca. Mudou o spec de propósito? Mude
+  // aqui também, conscientemente.
+  it("spec completo é exatamente o esperado — nada a mais, nada a menos", () => {
+    const spec = montarSpecGuarda({
+      imagemPainel: "ghcr.io/enchaaluno/setup-panel:0.4.1@sha256:abc123def456",
+      versaoApp: "0.4.1",
+      peers: ["10.0.0.5", "10.0.0.6"],
+      permitirExtra: "203.0.113.9",
+      desativado: true,
+    });
+    expect(spec).toStrictEqual({
+      Name: "encha-guard",
+      Labels: { "com.encha.role": "swarm-guard", "com.encha.guard.versao": "0.4.1" },
+      Mode: { Global: {} },
+      TaskTemplate: {
+        ContainerSpec: {
+          Image: "ghcr.io/enchaaluno/setup-panel:0.4.1@sha256:abc123def456",
+          Command: ["/usr/local/bin/encha-guard"],
+          User: "0",
+          Env: [
+            "ENCHA_GUARD_PEERS=10.0.0.5,10.0.0.6",
+            "ENCHA_GUARD_PERMITIR=203.0.113.9",
+            "ENCHA_GUARD_DESATIVADO=1",
+          ],
+          CapabilityDrop: ["ALL"],
+          CapabilityAdd: ["CAP_NET_ADMIN"],
+          ReadOnly: true,
+          Healthcheck: { Test: ["NONE"] },
+        },
+        Networks: [{ Target: "host" }],
+        RestartPolicy: { Condition: "any", Delay: 5_000_000_000 },
+        Resources: { Limits: { NanoCPUs: 100_000_000, MemoryBytes: 67_108_864 } },
+        Placement: { Constraints: ["node.platform.os == linux"] },
+      },
+    });
+  });
+
   it("Mode.Global presente", () => {
     const spec = montarSpecGuarda(baseArgs);
     expect(spec.Mode).toEqual({ Global: {} });
