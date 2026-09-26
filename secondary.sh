@@ -38,6 +38,25 @@ else
   EVOLUTION_ACTIVATION_ENV=""
 fi
 
+# Versão fixa do Portainer (server + agent). Mantenha em sincronia com
+# PORTAINER_VERSION em encha-setup-panel/src/lib/stacks/traefik-portainer.ts.
+#
+# NUNCA voltar para "latest": era o que os dois serviços usavam até esta
+# versão — auditoria numa VPS de produção real (2026-09) confirmou que
+# resolvia para 2.45.1 no momento, mas ":latest" não é reprodutível (duas
+# instalações em datas diferentes acabam rodando builds diferentes do
+# Portainer). Numa reinstalação, resolver_imagens_portainer() decide se
+# implanta esta versão ou a que já está em uso (nunca rebaixa — ver o
+# comentário daquela função).
+PORTAINER_VERSION="2.45.1"
+
+# Imagem do curl usada para as chamadas HTTP internas ao Portainer
+# (autenticação, verificação de admin, renomeação de usuário, deploy de
+# stack via API). Ela recebe a senha do Portainer e o JWT como argumento de
+# linha de comando, então merece ser íntegra — nunca ":latest" nem sem tag.
+# Tag + digest resolvidos via `docker manifest inspect curlimages/curl:8.11.1`.
+ENCHA_CURL_IMAGE="curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
+
 #FERRAMENTAS VISUAIS
 
 centralizar() {
