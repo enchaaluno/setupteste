@@ -541,8 +541,11 @@ describe("inicializarGarantiaGuardaSwarm (agendamento)", () => {
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);
     const timeoutHandle = setTimeoutSpy.mock.results[0].value as NodeJS.Timeout;
     const intervalHandle = setIntervalSpy.mock.results[0].value as NodeJS.Timeout;
-    expect(typeof timeoutHandle.unref).toBe("function");
-    expect(typeof intervalHandle.unref).toBe("function");
+    // hasRef() é o estado REAL do handle (auditoria C6: a versão anterior
+    // só checava `typeof unref === "function"`, verdadeiro para todo
+    // Timeout do Node — tirar o .unref() do código passava do mesmo jeito).
+    expect(timeoutHandle.hasRef()).toBe(false);
+    expect(intervalHandle.hasRef()).toBe(false);
     // limpa de verdade (nunca deixa o timer real de 6h correndo pós-teste).
     clearTimeout(timeoutHandle);
     clearInterval(intervalHandle);
