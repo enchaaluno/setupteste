@@ -382,6 +382,28 @@ for entrada in $DEVEM_SER_ACEITOS; do
 done
 [ "$aceite_ok" -eq 1 ] && ok "validador: aceita IPv4/IPv6/CIDR válidos, inclusive as formas comprimidas"
 
+# --- 6c. Curinga de shell na entrada nunca vira nome de arquivo ------------
+
+# A lista é quebrada em itens por expansão sem aspas; sem "set -f", um "*"
+# na env var seria expandido para os nomes de arquivo do diretório corrente
+# — e um arquivo chamado "10.9.9.9" viraria um par liberado.
+dir_glob="$TMP_TESTE/glob"
+mkdir -p "$dir_glob"
+: > "$dir_glob/10.9.9.9"
+saida_glob="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_PERMITIR='* 10.0.0.[0-9]*'
+  export ENCHA_GUARD_PERMITIR
+  script_abs="$PWD/$SCRIPT"
+  cd "$dir_glob" && FAKE_NFT_DIR="$NFT_RENDER_DIR" REAL_SLEEP="$REAL_SLEEP" \
+    PATH="$FAKEBIN:$PATH" com_prazo 5 sh "$script_abs" --render 2>/dev/null
+)"
+if printf '%s\n' "$saida_glob" | grep -qF '10.9.9.9'; then
+  falha "curinga: '*' na env var foi expandido para nome de arquivo (10.9.9.9 virou par liberado)"
+else
+  ok "curinga: '*' na env var não é expandido para nomes de arquivo"
+fi
+
 # --- 7. Validação de sintaxe REAL com nft -c -f - (se disponível) --------
 
 # Nunca instala pacote (um teste não mexe no sistema de quem o roda). O nft

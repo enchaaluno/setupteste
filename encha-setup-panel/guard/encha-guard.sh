@@ -45,6 +45,12 @@
 # SIGTERM/EXIT — isso é intencional e não é um esquecimento.
 
 set -u
+# Sem expansão de curinga: a lista de pares é quebrada em itens por expansão
+# SEM aspas (coletar_enderecos) — sem isto, um "*" na env var viraria os
+# nomes de arquivo do diretório corrente, e um arquivo chamado "10.9.9.9"
+# viraria um par liberado. (Não afeta os padrões de `case`, que não são
+# expansão de nome de arquivo.)
+set -f
 
 # --- formato aceito (ver cabeçalho) --------------------------------------
 RE_IPV4='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
