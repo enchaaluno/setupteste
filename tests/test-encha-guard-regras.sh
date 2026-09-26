@@ -837,6 +837,55 @@ else
   falha "SSH: a regra de rate-limit não vem antes dos drops fixos (ssh=$pos_ssh drop=$pos_drop_swarm)"
 fi
 
+# 9f'. Allowlist ANTES do limite de SSH: um par (PEERS/PERMITIR) já recebeu
+# "accept" e a chain acabou para ele — o operador confiável nunca tem as
+# próprias reconexões limitadas (conferido no kernel real: 45 conexões
+# seguidas de um IP da allowlist, 45 aceitas, nenhum elemento no balde).
+saida_ssh_pares="$(
+  unset ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
+  ENCHA_GUARD_PEERS="10.0.0.5"
+  ENCHA_GUARD_PERMITIR="2001:db8::1"
+  export ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR
+  renderizar
+)"
+pos_p4="$(printf '%s\n' "$saida_ssh_pares" | grep -n 'ip saddr @pares4 accept' | head -1 | cut -d: -f1)"
+pos_p6="$(printf '%s\n' "$saida_ssh_pares" | grep -n 'ip6 saddr @pares6 accept' | head -1 | cut -d: -f1)"
+pos_ssh1="$(printf '%s\n' "$saida_ssh_pares" | grep -n 'ct state new' | head -1 | cut -d: -f1)"
+if [ -n "$pos_p4" ] && [ -n "$pos_p6" ] && [ -n "$pos_ssh1" ] && [ "$pos_p4" -lt "$pos_ssh1" ] && [ "$pos_p6" -lt "$pos_ssh1" ]; then
+  ok "SSH: accepts da allowlist (pares4/pares6) vêm antes do limite — par confiável nunca é limitado"
+else
+  falha "SSH: o limite de SSH vem antes da allowlist (p4=$pos_p4 p6=$pos_p6 ssh=$pos_ssh1) — o operador confiável seria limitado"
+fi
+
+# 9c'. Bordas da porta: 1 e 65535 passam; 0 (porta TCP inválida — o
+# decimal_canonico_ate aceita "0" porque serve a octeto IPv4), zero à
+# esquerda, 65536, 2^64+22 (nunca pode "dar a volta" no test numérico), sinal,
+# hexa e notação científica caem.
+porta_aceita() {
+  local saida
+  saida="$(
+    unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+    ENCHA_GUARD_SSH_PORTAS="$1"
+    export ENCHA_GUARD_SSH_PORTAS
+    renderizar 2>/dev/null
+  )"
+  printf '%s\n' "$saida" | grep -q 'ct state new'
+}
+bordas_ok=1
+for porta in 0 00 022 65536 123456 18446744073709551638 -1 +22 2e3 0x16 22a; do
+  if porta_aceita "$porta"; then
+    falha "SSH: porta inválida '$porta' foi aceita no dport"
+    bordas_ok=0
+  fi
+done
+for porta in 1 65535; do
+  if ! porta_aceita "$porta"; then
+    falha "SSH: porta válida '$porta' foi descartada"
+    bordas_ok=0
+  fi
+done
+[ "$bordas_ok" -eq 1 ] && ok "SSH: bordas da porta (0/00/022/65536/sinal/hexa rejeitadas; 1 e 65535 aceitas)"
+
 # 9h. Idempotência com tráfego SSH (achado da auditoria C7): o kernel põe um
 # elemento por origem nos sets ssh_limite4/6 a cada tentativa de SSH, com
 # "expires" contando — a listagem muda sozinha. Se a comparação do loop não
