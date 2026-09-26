@@ -60,12 +60,16 @@ chmod +x "$BINDIR/sudo"
 # FAKE_DOCKER_MODE controla o que o "docker run" (chamada curl-em-container
 # contra /api/system/status) devolve; FAKE_IMG_AGENT/FAKE_IMG_SERVER
 # controlam o que "docker service inspect" devolve (imagem completa em uso).
+# Toda chamada "docker run" é registrada (uma linha, args separados por
+# espaço) em $FAKE_LOG para o teste conferir COMO o curl é chamado.
 cat > "$BINDIR/docker" <<'EODOCKER'
 #!/bin/bash
 case "$1" in
   run)
+    [ -n "${FAKE_LOG:-}" ] && echo "$*" >> "$FAKE_LOG"
     case "${FAKE_DOCKER_MODE:-}" in
       maior) echo '{"Version":"2.46.0"}' ;;
+      igual) echo "{\"Version\":\"$PORTAINER_VERSION\"}" ;;
       menor) echo '{"Version":"2.40.0"}' ;;
       naosemver) echo '{"Version":"2.46.0-rc1"}' ;;
       falha) : ;;
@@ -85,16 +89,20 @@ exit 0
 EODOCKER
 chmod +x "$BINDIR/docker"
 
+FAKE_LOG="$BINDIR/docker-run.log"
+
 rodar_cenario() {
   # Roda resolver_imagens_portainer num subshell isolado (com o PATH falso)
   # e imprime "IMAGEM_AGENT_PORTAINER=<x>|IMAGEM_SERVER_PORTAINER=<y>".
+  # 4º argumento: ja_inicializado (padrão true = reinstalação).
+  : > "$FAKE_LOG"
   (
     export PATH="$BINDIR:$PATH"
-    export PORTAINER_VERSION ENCHA_CURL_IMAGE
+    export PORTAINER_VERSION ENCHA_CURL_IMAGE FAKE_LOG
     export FAKE_DOCKER_MODE="${1:-}" FAKE_IMG_AGENT="${2:-}" FAKE_IMG_SERVER="${3:-}"
     eval "$fn_semver"
     eval "$fn_resolver"
-    resolver_imagens_portainer "rede-teste" true
+    resolver_imagens_portainer "rede-teste" "${4:-true}"
     echo "IMAGEM_AGENT_PORTAINER=$IMAGEM_AGENT_PORTAINER|IMAGEM_SERVER_PORTAINER=$IMAGEM_SERVER_PORTAINER"
   )
 }
@@ -118,17 +126,45 @@ else
 fi
 
 # --- Cenário 2b: versão em uso IGUAL à fixa -> implanta a FIXA (não é "maior") ---
-saida="$(FAKE_DOCKER_MODE_VERSION_IGUAL=1 rodar_cenario igual)"
-# "igual" não é um modo conhecido do docker fake (cai no default vazio) — em
-# vez disso, testamos igualdade forçando o modo "menor" mas comparando com a
-# própria PORTAINER_VERSION via versao_semver_maior diretamente.
-(
-  eval "$fn_semver"
-  if versao_semver_maior "$PORTAINER_VERSION" "$PORTAINER_VERSION"; then
-    echo "❌ FALHOU: versao_semver_maior considerou uma versão maior que ela mesma"
-    exit 1
-  fi
-) && ok "versao_semver_maior: versão igual não é considerada maior" || falhas=$((falhas + 1))
+# As imagens "em uso" do docker falso são outras de propósito: se a igualdade
+# caísse no ramo de fallback, o resultado seria elas, não a fixa.
+saida="$(rodar_cenario igual "portainer/agent:outra" "portainer/portainer-ce:outra")"
+esperado="IMAGEM_AGENT_PORTAINER=portainer/agent:${PORTAINER_VERSION}|IMAGEM_SERVER_PORTAINER=portainer/portainer-ce:${PORTAINER_VERSION}"
+if [ "$saida" = "$esperado" ]; then
+  ok "versão em uso igual ($PORTAINER_VERSION) -> implanta a fixa"
+else
+  falha "versão em uso igual: esperado '$esperado', obtido '$saida'"
+fi
+
+# --- Cenário 2c: COMO o curl é chamado ---
+# Precisa de timeout explícito (-m): sem ele, um Portainer de pé mas travado
+# segura a reinstalação indefinidamente antes do 'docker stack rm'. Precisa
+# usar a imagem fixa do curl e a rota pública /api/system/status (a única
+# que responde sem JWT — /api/system/version exige login).
+rodar_cenario maior >/dev/null
+chamada="$(cat "$FAKE_LOG")"
+if [ "$(printf '%s\n' "$chamada" | grep -c .)" -ne 1 ]; then
+  falha "reinstalação: esperava exatamente 1 'docker run', vi: $chamada"
+elif ! printf '%s\n' "$chamada" | grep -qE '(^| )-m [0-9]+( |$)'; then
+  falha "curl de /api/system/status sem timeout explícito (-m N): $chamada"
+elif ! printf '%s\n' "$chamada" | grep -qF "$ENCHA_CURL_IMAGE"; then
+  falha "curl de /api/system/status não usa ENCHA_CURL_IMAGE: $chamada"
+elif ! printf '%s\n' "$chamada" | grep -qF "http://portainer_portainer:9000/api/system/status"; then
+  falha "curl não consulta http://portainer_portainer:9000/api/system/status: $chamada"
+else
+  ok "curl da leitura de versão: imagem fixa, rota pública e timeout explícito"
+fi
+
+# --- Cenário 2d: instalação NOVA -> fixa, sem nenhum 'docker run' ---
+saida="$(rodar_cenario maior "portainer/agent:outra" "portainer/portainer-ce:outra" false)"
+esperado="IMAGEM_AGENT_PORTAINER=portainer/agent:${PORTAINER_VERSION}|IMAGEM_SERVER_PORTAINER=portainer/portainer-ce:${PORTAINER_VERSION}"
+if [ "$saida" != "$esperado" ]; then
+  falha "instalação nova: esperado '$esperado', obtido '$saida'"
+elif [ -s "$FAKE_LOG" ]; then
+  falha "instalação nova não deveria consultar o Portainer, mas chamou: $(cat "$FAKE_LOG")"
+else
+  ok "instalação nova -> implanta a fixa sem consultar nada"
+fi
 
 # --- Cenário 3: leitura falha (erro/vazio) -> reusa a imagem completa em uso ---
 saida="$(rodar_cenario falha "portainer/agent:2.44.9" "portainer/portainer-ce:2.44.9")"
