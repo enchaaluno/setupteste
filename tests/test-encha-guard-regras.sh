@@ -339,6 +339,49 @@ for saida_nome_valor in "basica:$saida_basica" "ipv4:$saida_ipv4" "ipv6:$saida_i
   [ "$achado" -eq 0 ] && ok "saída ($nome): sem flush ruleset / tabelas do Docker"
 done
 
+# --- 6b. Validação rente ao que o nft aceita --------------------------------
+
+# Toda entrada que o validador aceita vai para o MESMO `nft -f -` das regras
+# de drop. Se o nft rejeitar um único elemento, a transação inteira falha e o
+# guarda não aplica nada — as portas do Swarm ficam abertas. Por isso o
+# validador precisa ser, no máximo, tão permissivo quanto o nft. Os casos
+# "rejeitar" abaixo foram todos conferidos contra o nft 1.1.5 real (Alpine):
+# ou o nft recusa a transação inteira (":", ":::", "12345::", "1::2::3",
+# "1:2:3:4:5:6:7:8:9", "008.0.0.1"), ou aceita com OUTRO significado —
+# "010.0.0.1" é lido como octal pelo resolvedor e libera 8.0.0.1, não
+# 10.0.0.1. Zero à esquerda nunca é aceito (nem no octeto, nem no prefixo).
+aceito_pelo_validador() {
+  local saida
+  saida="$(
+    unset ENCHA_GUARD_PEERS ENCHA_GUARD_DESATIVADO
+    ENCHA_GUARD_PERMITIR="$1"
+    export ENCHA_GUARD_PERMITIR
+    renderizar 2>/dev/null
+  )"
+  printf '%s\n' "$saida" | grep -q 'elements = {'
+}
+
+DEVEM_SER_REJEITADOS='010.0.0.1 008.0.0.1 10.0.0.01 10.0.0.1/08 10.0.0.1/ 10.0.0.1/33 : ::: :::1 1:2:3:4:5:6:7:8:9 1::2::3 12345:: :1:: 1: 1:2:3:4:5:6:7:8: 1:2:3:4:5:6:7:8:: 1::2:3:4:5:6:7:8 1:2:3:4:5:6:7 2001:db8::1/ 2001:db8::1/0128 2001:db8::1/129 2001:db8::g ::ffff:1.2.3.4'
+DEVEM_SER_ACEITOS='0.0.0.0 10.0.0.1 10.0.0.1/0 10.0.0.0/24 255.255.255.255/32 :: ::1 1:: ::ffff 1:2:3:4:5:6:7:8 1:2:3:4:5:6:7:: ::2:3:4:5:6:7:8 fe80::1/64 2001:DB8::A 2001:db8::1/128'
+
+rejeicao_ok=1
+for entrada in $DEVEM_SER_REJEITADOS; do
+  if aceito_pelo_validador "$entrada"; then
+    falha "validador aceitou '$entrada' (o nft recusa ou lê com outro sentido)"
+    rejeicao_ok=0
+  fi
+done
+[ "$rejeicao_ok" -eq 1 ] && ok "validador: rejeita os casos que o nft recusa ou lê diferente (zero à esquerda, IPv6 malformado)"
+
+aceite_ok=1
+for entrada in $DEVEM_SER_ACEITOS; do
+  if ! aceito_pelo_validador "$entrada"; then
+    falha "validador rejeitou '$entrada' (endereço válido)"
+    aceite_ok=0
+  fi
+done
+[ "$aceite_ok" -eq 1 ] && ok "validador: aceita IPv4/IPv6/CIDR válidos, inclusive as formas comprimidas"
+
 # --- 7. Validação de sintaxe REAL com nft -c -f - (se disponível) --------
 
 # Nunca instala pacote (um teste não mexe no sistema de quem o roda). O nft
@@ -365,6 +408,25 @@ if command -v nft >/dev/null 2>&1 && echo 'table inet encha_guard_sonda {}' | nf
     renderizar
   )"
   validar_sintaxe "IPv4 + IPv6" "$saida_mista"
+  # Tudo que o validador aceita, junto, tem que passar no nft real.
+  saida_bordas="$(
+    unset ENCHA_GUARD_PEERS ENCHA_GUARD_DESATIVADO
+    ENCHA_GUARD_PERMITIR="$DEVEM_SER_ACEITOS"
+    export ENCHA_GUARD_PERMITIR
+    renderizar 2>/dev/null
+  )"
+  validar_sintaxe "todas as bordas aceitas pelo validador" "$saida_bordas"
+  # E cada caso rejeitado, se passasse, derrubaria a transação ou mudaria o
+  # sentido — confere que o nft real de fato recusa os que dizemos recusar
+  # por sintaxe (os de sentido diferente, como 010.0.0.1, ele aceita).
+  for entrada in ':' ':::' '12345::' '1::2::3' '1:2:3:4:5:6:7:8:9' '008.0.0.1'; do
+    if printf 'table inet encha_guard_sonda { set s { type %s; flags interval; elements = { %s }; }; }\n' \
+        "$(case "$entrada" in *:*) echo ipv6_addr ;; *) echo ipv4_addr ;; esac)" "$entrada" \
+        | nft -c -f - >/dev/null 2>&1; then
+      falha "nft real ACEITOU '$entrada' — revise a lista de rejeição do teste"
+    fi
+  done
+  ok "nft real: recusa os casos de sintaxe que o validador também recusa"
 else
   echo "ℹ️  'nft' real indisponível (ausente ou sem CAP_NET_ADMIN) — pulando a validação de sintaxe real. A geração de regras já foi coberta pelos testes 1-6 acima."
 fi

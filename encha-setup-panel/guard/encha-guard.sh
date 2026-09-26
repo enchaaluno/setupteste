@@ -48,40 +48,61 @@ set -u
 
 # --- formato aceito (ver cabeçalho) --------------------------------------
 RE_IPV4='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
-RE_IPV6='^[0-9a-fA-F:]+(/[0-9]{1,3})?$'
 
 log() {
   # Log simples em stderr, com prefixo — nada de segredo passa por aqui
-  # (as env vars validadas são IPs/CIDRs, nunca credencial).
-  echo "[encha-guard] $*" >&2
+  # (as env vars validadas são IPs/CIDRs, nunca credencial). printf, não
+  # echo: o echo do dash interpreta "\c", "\n" etc. vindos da entrada.
+  printf '[encha-guard] %s\n' "$*" >&2
 }
 
 # --- validação numérica --------------------------------------------------
+#
+# Regra geral: o validador nunca pode ser MAIS permissivo que o nft. Todo
+# elemento aceito aqui entra no mesmo `nft -f -` das regras de drop — se o
+# nft rejeitar um único elemento, a transação inteira falha e o guarda não
+# aplica nada (portas do Swarm abertas). Conferido com o nft 1.1.5 real:
+# "008.0.0.1" derruba a transação, e "010.0.0.1" é aceito mas lido como
+# OCTAL pelo resolvedor (libera 8.0.0.1). Por isso número decimal canônico:
+# sem zero à esquerda, nunca.
 
-# Um octeto IPv4 (a forma [0-9]{1,3} já foi garantida por quem chama; aqui
-# só a faixa 0-255). Comparação via `test`/`[` — nunca `$(( ))`: assim não
-# corremos risco de um shell interpretar "0-liderado" como octal.
-octeto_ipv4_valido() {
+# Número decimal canônico ("0" ou sem zero à esquerda) entre 0 e "$2".
+decimal_canonico_ate() {
   case "$1" in
     '' | *[!0-9]*) return 1 ;;
+    0) return 0 ;;
+    0*) return 1 ;;
   esac
-  [ "$1" -le 255 ]
+  # Já tem no máximo 3 dígitos (garantido pela forma, ver quem chama) — o
+  # `test` compara como decimal (sem zero à esquerda não há leitura octal).
+  [ "$1" -le "$2" ]
+}
+
+# Um octeto IPv4: decimal canônico 0-255.
+octeto_ipv4_valido() {
+  case "$1" in
+    ??? | ?? | ?) : ;;
+    *) return 1 ;;
+  esac
+  decimal_canonico_ate "$1" 255
 }
 
 # Prefixo /N genérico (CIDR), com o teto certo pra família (32 ou 128).
 prefixo_valido() {
-  valor="$1"
-  maximo="$2"
-  case "$valor" in
-    '' | *[!0-9]*) return 1 ;;
+  case "$1" in
+    ??? | ?? | ?) : ;;
+    *) return 1 ;;
   esac
-  [ "$valor" -le "$maximo" ]
+  decimal_canonico_ate "$1" "$2"
 }
 
 # --- validação por família -----------------------------------------------
 
 ipv4_valido() {
   entrada="$1"
+  case "$entrada" in
+    '' | *[!0-9./]*) return 1 ;;
+  esac
   printf '%s' "$entrada" | grep -Eq "$RE_IPV4" || return 1
 
   case "$entrada" in
@@ -108,30 +129,70 @@ ipv4_valido() {
     octeto_ipv4_valido "$oct" || return 1
   done
 
-  if [ -n "$prefixo" ]; then
-    prefixo_valido "$prefixo" 32 || return 1
-  fi
+  case "$entrada" in
+    */*) prefixo_valido "$prefixo" 32 || return 1 ;;
+  esac
 
   return 0
 }
 
+# Conta os grupos hex de uma lista "g:g:g" (sem "::"). Cada grupo tem 1 a 4
+# dígitos hex; lista vazia = 0 grupos. Resultado em GRUPOS_HEX (global, sem
+# subshell). Falha em grupo vazio (":" solto na ponta ou dobrado) ou inválido.
+contar_grupos_hex() {
+  lista="$1"
+  GRUPOS_HEX=0
+  [ -n "$lista" ] || return 0
+  case "$lista" in
+    :* | *: | *::*) return 1 ;;
+  esac
+  resto="$lista"
+  while :; do
+    grupo="${resto%%:*}"
+    case "$grupo" in
+      '' | ?????* | *[!0-9a-fA-F]*) return 1 ;;
+    esac
+    GRUPOS_HEX=$((GRUPOS_HEX + 1))
+    [ "$GRUPOS_HEX" -le 8 ] || return 1
+    case "$resto" in
+      *:*) resto="${resto#*:}" ;;
+      *) break ;;
+    esac
+  done
+  return 0
+}
+
+# IPv6 pela gramática do RFC 4291 (sem a forma com IPv4 embutido, que é
+# descartada): 8 grupos de 1-4 hex, ou menos com UM "::" (que vale por pelo
+# menos um grupo de zeros); prefixo opcional 0-128 decimal canônico.
 ipv6_valido() {
   entrada="$1"
-  printf '%s' "$entrada" | grep -Eq "$RE_IPV6" || return 1
-
-  # RE_IPV6 é solto de propósito (só restringe o alfabeto), então exige-se
-  # ao menos um ":" aqui — sem isso, uma string só de dígitos como "1234"
-  # (sem ponto, então nunca bateria como IPv4) passaria pela forma sem ser
-  # um IPv6 de fato.
   case "$entrada" in
+    '' | *[!0-9a-fA-F:/]*) return 1 ;;
     *:*) : ;;
     *) return 1 ;;
   esac
 
   case "$entrada" in
+    */*/*) return 1 ;;
     */*)
-      prefixo="${entrada#*/}"
-      prefixo_valido "$prefixo" 128 || return 1
+      prefixo_valido "${entrada#*/}" 128 || return 1
+      ip_parte="${entrada%/*}"
+      ;;
+    *) ip_parte="$entrada" ;;
+  esac
+
+  case "$ip_parte" in
+    *:::* | *::*::*) return 1 ;;
+    *::*)
+      contar_grupos_hex "${ip_parte%%::*}" || return 1
+      esquerda="$GRUPOS_HEX"
+      contar_grupos_hex "${ip_parte#*::}" || return 1
+      [ $((esquerda + GRUPOS_HEX)) -le 7 ] || return 1
+      ;;
+    *)
+      contar_grupos_hex "$ip_parte" || return 1
+      [ "$GRUPOS_HEX" -eq 8 ] || return 1
       ;;
   esac
 
