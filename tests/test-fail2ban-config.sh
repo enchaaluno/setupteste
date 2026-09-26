@@ -418,45 +418,83 @@ else
 fi
 
 # ============================================================
-# 9. Se disponível no ambiente, validação real de sintaxe (fora do PATH
-#    falso — usa o fail2ban de verdade do sistema, se houver, igual
-#    tests/test-encha-guard-regras.sh faz com 'nft'). Nunca falha o teste
-#    por ausência.
+# 9. Se disponível no ambiente, validação com o fail2ban DE VERDADE (fora
+#    do PATH falso). Nunca falha o teste por ausência — mas, quando roda,
+#    precisa provar alguma coisa (auditoria C10: a versão anterior rodava
+#    `fail2ban-client -t -c <dir só com os .local>`, que diz "OK" até com
+#    backend/banaction inexistentes — sem jail.conf não há jail nenhuma pra
+#    testar; e casava uma linha SEM hostname, que o `_daemon = sshd` puro do
+#    upstream também casa pelo slot de hostname — não pegava o override
+#    removido).
 # ============================================================
-if command -v fail2ban-client >/dev/null 2>&1 && command -v fail2ban-regex >/dev/null 2>&1; then
-  if fail2ban-client -t -c "$ETC1" >/dev/null 2>&1; then
-    ok "fail2ban-client -t -c <dir>: configuração real válida"
+if command -v fail2ban-client >/dev/null 2>&1 && command -v fail2ban-regex >/dev/null 2>&1 \
+   && [ -f /etc/fail2ban/jail.conf ] && [ -f /etc/fail2ban/filter.d/sshd.conf ]; then
+  # Árvore real do pacote + nossos dois arquivos por cima, num diretório
+  # temporário (nunca escreve em /etc/fail2ban) — é exatamente o merge
+  # .conf/.local que o fail2ban faz em produção.
+  TMP_F2B="$(mktemp -d)"
+  cp -r /etc/fail2ban/. "$TMP_F2B/"
+  cp "$ETC1/jail.d/encha-sshd.local" "$TMP_F2B/jail.d/encha-sshd.local"
+  cp "$ETC1/filter.d/sshd.local" "$TMP_F2B/filter.d/sshd.local"
+
+  if fail2ban-client -c "$TMP_F2B" -t >/dev/null 2>&1; then
+    ok "fail2ban-client -t sobre a árvore real + nossos .local: configuração válida"
   else
-    falha "fail2ban-client -t -c <dir>: configuração real INVÁLIDA"
+    falha "fail2ban-client -t sobre a árvore real + nossos .local: configuração INVÁLIDA"
   fi
 
-  # fail2ban-regex precisa do sshd.conf de origem MAIS o que ele inclui
-  # (common.conf etc, via [INCLUDES]), não só do .local isolado — copia a
-  # árvore filter.d/ real do sistema pra um basedir temporário (nunca
-  # escreve de volta em /etc/fail2ban) e sobrepõe nosso sshd.local por cima,
-  # exatamente como o fail2ban real faria o merge .conf + .local.
-  if [ -d /etc/fail2ban/filter.d ]; then
-    TMP_BASEDIR="$(mktemp -d)"
-    cp -r /etc/fail2ban/filter.d "$TMP_BASEDIR/"
-    cp "$ETC1/filter.d/sshd.local" "$TMP_BASEDIR/filter.d/sshd.local"
-    # Linha sintética no formato que o backend systemd reconstrói a partir
-    # de SYSLOG_IDENTIFIER/_COMM + PID + MESSAGE (ver formatJournalEntry em
-    # fail2ban/server/filtersystemd.py e o comentário grande de
-    # instalar_protecao_ssh em secondary.sh) para o OpenSSH 10 do Debian 13.
-    saida_regex="$(fail2ban-regex --print-all-matched \
-      'sshd-session[1234]: Invalid user root from 198.51.100.7 port 22' \
-      "$TMP_BASEDIR/filter.d/sshd.conf" 2>&1)" || true
-    rm -rf "$TMP_BASEDIR"
-    if printf '%s' "$saida_regex" | grep -q "1 matched"; then
-      ok "fail2ban-regex: linha 'sshd-session[...]: Invalid user root...' bate o filtro com nosso override"
-    else
-      falha "fail2ban-regex: linha sshd-session não bateu o filtro — $saida_regex"
-    fi
+  # O -t acima só vale se detectar config quebrada: prova com uma cópia
+  # estragada de propósito.
+  TMP_RUIM="$(mktemp -d)"
+  cp -r "$TMP_F2B/." "$TMP_RUIM/"
+  sed -i.bak 's/^backend = systemd$/backend = naoexiste/' "$TMP_RUIM/jail.d/encha-sshd.local"
+  if fail2ban-client -c "$TMP_RUIM" -t >/dev/null 2>&1; then
+    falha "fail2ban-client -t aceitou 'backend = naoexiste' — a checagem de sintaxe acima não prova nada"
   else
-    echo "ℹ️  /etc/fail2ban/filter.d ausente (fail2ban-client existe mas o pacote não está instalado de verdade) — pulando fail2ban-regex."
+    ok "fail2ban-client -t recusa config quebrada (a checagem acima é de verdade)"
   fi
+  rm -rf "$TMP_RUIM"
+
+  # Config EFETIVA da jail, depois do merge (-d): nossos valores vencem os
+  # do pacote — o defaults-debian.conf do Debian 13 põe
+  # "banaction = nftables" no [DEFAULT] e outro journalmatch no [sshd].
+  dump="$(fail2ban-client -c "$TMP_F2B" -d 2>/dev/null)"
+  if printf '%s\n' "$dump" | grep -qF "['add', 'sshd', 'systemd']"; then
+    ok "config efetiva: jail sshd com backend systemd"
+  else
+    falha "config efetiva: jail sshd não está com backend systemd"
+  fi
+  if printf '%s\n' "$dump" | grep -qF "['set', 'sshd', 'addaction', 'iptables-multiport']" \
+     && ! printf '%s\n' "$dump" | grep -qE "\['set', 'sshd', 'addaction', 'nftables"; then
+    ok "config efetiva: ação iptables-multiport (nunca nftables) na jail sshd"
+  else
+    falha "config efetiva: a jail sshd não ficou só com iptables-multiport: $(printf '%s\n' "$dump" | grep "'sshd', 'addaction'")"
+  fi
+  if printf '%s\n' "$dump" | grep -F "['set', 'sshd', 'addignoreip'" | grep -qF "'127.0.0.1/8', '::1'"; then
+    ok "config efetiva: ignoreip com loopback"
+  else
+    falha "config efetiva: ignoreip sem loopback"
+  fi
+
+  # Linhas COM hostname, no formato que o backend systemd reconstrói
+  # (hostname + SYSLOG_IDENTIFIER[pid]: MESSAGE) e com logtype=journal, como
+  # a jail real usa. "sshd-auth" é o que só o nosso override cobre (o pacote
+  # Debian 1.1.0-8 traz "sshd(?:-session)?") — é a linha que pega o
+  # override removido ou encurtado.
+  for linha in \
+    'encha sshd-session[1234]: Invalid user naoexiste123 from 198.51.100.7 port 22' \
+    'encha sshd-auth[1234]: Invalid user naoexiste123 from 198.51.100.7 port 22' \
+    'encha sshd-session[1234]: Failed password for root from 198.51.100.7 port 22 ssh2'; do
+    saida_regex="$(fail2ban-regex "$linha" "$TMP_F2B/filter.d/sshd.conf[logtype=journal]" 2>&1)" || true
+    if printf '%s' "$saida_regex" | grep -q "1 matched"; then
+      ok "fail2ban-regex (journal) casa: $linha"
+    else
+      falha "fail2ban-regex (journal) NÃO casa: $linha — $(printf '%s' "$saida_regex" | grep -E '^Lines:')"
+    fi
+  done
+  rm -rf "$TMP_F2B"
 else
-  echo "ℹ️  fail2ban-client/fail2ban-regex reais indisponíveis neste ambiente — pulando a validação de sintaxe real (as seções 1-8 acima já cobrem a geração de config)."
+  echo "ℹ️  fail2ban real indisponível neste ambiente — pulando a validação real (as seções 1-8 acima já cobrem a geração de config)."
 fi
 
 [ "$falhas" -eq 0 ] || exit 1
