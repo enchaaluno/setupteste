@@ -1491,11 +1491,16 @@ validar_dominio() {
 # persistente, mantém "admin" e avisa — NUNCA aborta a instalação por causa
 # disso.
 #
-# Uso: renomear_admin_portainer_se_necessario <rede> <usuario_alvo> <senha> <token_admin>
-# Efeitos: define USER_PORTAINER_FINAL e TOKEN_PORTAINER_FINAL (globais).
-MSG_PT[renomear_admin_portainer_falha]="\e[33m⚠️  Não foi possível renomear o admin do Portainer para \"%s\" (HTTP %s) — mantendo \"admin\".\e[0m"
-MSG_EN[renomear_admin_portainer_falha]="\e[33m⚠️  Could not rename the Portainer admin to \"%s\" (HTTP %s) — keeping \"admin\".\e[0m"
-MSG_ES[renomear_admin_portainer_falha]="\e[33m⚠️  No fue posible renombrar el admin de Portainer a \"%s\" (HTTP %s) — manteniendo \"admin\".\e[0m"
+# Uso: renomear_admin_portainer_se_necessario <rede> <usuario_alvo> <senha> <token_admin> [usuario_atual=admin]
+# Efeitos: define USER_PORTAINER_FINAL (global).
+# <usuario_atual> é o usuário com quem <token_admin> já autenticou — normalmente
+# "admin" (bootstrap novo), mas numa reinstalação pode já ser outro nome
+# (ver finalizar_admin_portainer, único chamador hoje). Sem isso, uma
+# renomeação que falhasse "mantinha admin" mesmo quando o usuário de
+# verdade era outro — mentindo pro operador.
+MSG_PT[renomear_admin_portainer_falha]="\e[33m⚠️  Não foi possível renomear o admin do Portainer para \"%s\" (HTTP %s) — mantendo \"%s\".\e[0m"
+MSG_EN[renomear_admin_portainer_falha]="\e[33m⚠️  Could not rename the Portainer admin to \"%s\" (HTTP %s) — keeping \"%s\".\e[0m"
+MSG_ES[renomear_admin_portainer_falha]="\e[33m⚠️  No fue posible renombrar el admin de Portainer a \"%s\" (HTTP %s) — manteniendo \"%s\".\e[0m"
 
 MSG_PT[renomear_admin_portainer_sucesso]="\e[32m✅ Admin do Portainer renomeado para \"%s\".\e[0m"
 MSG_EN[renomear_admin_portainer_sucesso]="\e[32m✅ Portainer admin renamed to \"%s\".\e[0m"
@@ -1506,11 +1511,10 @@ MSG_EN[renomear_admin_portainer_reautenticar]="\e[33m⚠️  Renamed to \"%s\", 
 MSG_ES[renomear_admin_portainer_reautenticar]="\e[33m⚠️  Renombrado a \"%s\", pero falló la reautenticación — usando el token anterior.\e[0m"
 
 renomear_admin_portainer_se_necessario() {
-    local rede="$1" alvo="$2" senha="$3" token_admin="$4"
-    USER_PORTAINER_FINAL="admin"
-    TOKEN_PORTAINER_FINAL="$token_admin"
+    local rede="$1" alvo="$2" senha="$3" token_admin="$4" usuario_atual="${5:-admin}"
+    USER_PORTAINER_FINAL="$usuario_atual"
 
-    if [ -z "$alvo" ] || [ "$alvo" = "admin" ] || [ -z "$token_admin" ]; then
+    if [ -z "$alvo" ] || [ "$alvo" = "$usuario_atual" ] || [ -z "$token_admin" ]; then
         return 0
     fi
 
@@ -1527,7 +1531,7 @@ renomear_admin_portainer_se_necessario() {
     done
 
     if [ "$ok" != true ]; then
-        echo -e "$(t renomear_admin_portainer_falha "$alvo" "$http")"
+        echo -e "$(t renomear_admin_portainer_falha "$alvo" "$http" "$usuario_atual")"
         return 0
     fi
 
@@ -1539,12 +1543,113 @@ renomear_admin_portainer_se_necessario() {
 
     if [ -n "$novo_token" ] && [ "$novo_token" != "null" ]; then
         USER_PORTAINER_FINAL="$alvo"
-        TOKEN_PORTAINER_FINAL="$novo_token"
         echo -e "$(t renomear_admin_portainer_sucesso "$alvo")"
     else
         echo -e "$(t renomear_admin_portainer_reautenticar "$alvo")"
         USER_PORTAINER_FINAL="$alvo"
     fi
+}
+
+# Compartilhada pelas duas funções (hoje idênticas) que instalam
+# Traefik+Portainer — ferramenta_traefik_e_portainer (interativa) e
+# instalar_traefik_e_portainer (não-interativa). Corrige o achado INFRA-04
+# da auditoria em produção:
+#   1) a mensagem de sucesso era fixa ("usuário: admin") e impressa ANTES
+#      de renomear_admin_portainer_se_necessario rodar — sempre mentia
+#      quando o operador pedia outro usuário.
+#   2) numa reinstalação sobre um 'portainer_data' preservado cujo admin já
+#      tinha sido renomeado numa instalação anterior, o login era feito com
+#      "admin" hardcoded — falhava sempre, e o script gravava "Criar
+#      manualmente." mesmo com um admin funcional (só com outro nome).
+#
+# Uso: finalizar_admin_portainer <rede> <senha> <usuario_alvo> <ja_inicializado>
+# Efeitos: define USER_PORTAINER_FINAL e CREDENCIAIS_APLICADAS (globais —
+# mesmo contrato de renomear_admin_portainer_se_necessario, que este helper
+# chama). Não guarda o JWT em nenhuma variável de efeito: quem chama só
+# precisa saber o usuário final e se as credenciais foram aplicadas —
+# dados_portainer grava "Token: aplicado", nunca o token de verdade
+# (ver o comentário em cima do 'cat > dados_portainer' nas duas funções).
+#
+# Autentica tentando, em ordem, até 3 candidatos de usuário — parando no
+# primeiro que autenticar:
+#   a) o usuário escolhido pelo operador nesta execução (<usuario_alvo>);
+#   b) o que já está salvo em /root/dados_vps/dados_portainer (sobrevive a
+#      uma reinstalação sobre volume preservado; ignorado se for a string
+#      de fallback "Criar manualmente.");
+#   c) "admin" — o único usuário que o bootstrap do Portainer sabe criar.
+# Numa instalação NOVA (<ja_inicializado> != true) só "admin" pode existir
+# ainda — pula direto pra ele, sem gastar 2 chamadas HTTP fadadas a falhar.
+#
+# Autenticado com sucesso, tenta renomear para o alvo (reaproveitando
+# renomear_admin_portainer_se_necessario, que já é no-op se o usuário atual
+# já for o alvo) e SÓ ENTÃO imprime a mensagem de sucesso — com o usuário
+# final de verdade, sucesso ou não da renomeação.
+#
+# Sem nenhum candidato autenticando: CREDENCIAIS_APLICADAS fica false (quem
+# chama grava "Criar manualmente.", comportamento de fallback preservado);
+# numa reinstalação (só nesse caso, como já era antes deste helper) avisa
+# que as credenciais não bateram.
+MSG_PT[finalizar_admin_portainer_pronto]="\e[32m✅ Admin do Portainer pronto (usuário: %s)!\e[0m"
+MSG_EN[finalizar_admin_portainer_pronto]="\e[32m✅ Portainer admin ready (username: %s)!\e[0m"
+MSG_ES[finalizar_admin_portainer_pronto]="\e[32m✅ ¡Admin de Portainer listo (usuario: %s)!\e[0m"
+
+MSG_PT[finalizar_admin_portainer_nao_bateram]="\e[31m❌ Já existe um admin no Portainer, mas as credenciais digitadas não bateram.\e[0m"
+MSG_EN[finalizar_admin_portainer_nao_bateram]="\e[31m❌ A Portainer admin already exists, but the entered credentials did not match.\e[0m"
+MSG_ES[finalizar_admin_portainer_nao_bateram]="\e[31m❌ Ya existe un admin en Portainer, pero las credenciales ingresadas no coincidieron.\e[0m"
+
+MSG_PT[finalizar_admin_portainer_use_anteriores]="\e[31m   Use as credenciais da instalação anterior, ou remova o volume 'portainer_data' para recomeçar do zero.\e[0m"
+MSG_EN[finalizar_admin_portainer_use_anteriores]="\e[31m   Use the credentials from the previous installation, or remove the 'portainer_data' volume to start from scratch.\e[0m"
+MSG_ES[finalizar_admin_portainer_use_anteriores]="\e[31m   Use las credenciales de la instalación anterior, o elimine el volumen 'portainer_data' para comenzar de cero.\e[0m"
+
+finalizar_admin_portainer() {
+    local rede="$1" senha="$2" alvo="$3" ja_inicializado="$4"
+    USER_PORTAINER_FINAL=""
+    CREDENCIAIS_APLICADAS=false
+
+    local candidatos=()
+    if [ "$ja_inicializado" = true ]; then
+        [ -n "$alvo" ] && candidatos+=("$alvo")
+
+        local salvo=""
+        if [ -f /root/dados_vps/dados_portainer ]; then
+            salvo="$(grep -m1 '^Username: ' /root/dados_vps/dados_portainer 2>/dev/null | sed 's/^Username: //')"
+        fi
+        if [ -n "$salvo" ] && [ "$salvo" != "Criar manualmente." ]; then
+            local ja_tem_salvo=false c
+            for c in "${candidatos[@]}"; do [ "$c" = "$salvo" ] && ja_tem_salvo=true; done
+            [ "$ja_tem_salvo" = false ] && candidatos+=("$salvo")
+        fi
+    fi
+    local ja_tem_admin=false c
+    for c in "${candidatos[@]}"; do [ "$c" = "admin" ] && ja_tem_admin=true; done
+    [ "$ja_tem_admin" = false ] && candidatos+=("admin")
+
+    local usuario_atual="" token="" cand
+    for cand in "${candidatos[@]}"; do
+        token=$(sudo docker run --rm --network "$rede" "${ENCHA_CURL_IMAGE}" \
+            -s -X POST http://portainer_portainer:9000/api/auth \
+            -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg u "$cand" --arg p "$senha" '{username:$u,password:$p}')" 2>/dev/null | jq -r .jwt)
+        if [ -n "$token" ] && [ "$token" != "null" ]; then
+            usuario_atual="$cand"
+            break
+        fi
+    done
+
+    if [ -z "$usuario_atual" ]; then
+        if [ "$ja_inicializado" = true ]; then
+            # Reinstalação sobre admin pré-existente com credenciais
+            # diferentes das digitadas agora (em nenhum dos 3 candidatos):
+            # não sobrescrever dados_portainer com informação enganosa.
+            echo -e "$(t finalizar_admin_portainer_nao_bateram)"
+            echo -e "$(t finalizar_admin_portainer_use_anteriores)"
+        fi
+        return 1
+    fi
+
+    CREDENCIAIS_APLICADAS=true
+    renomear_admin_portainer_se_necessario "$rede" "$alvo" "$senha" "$token" "$usuario_atual"
+    echo -e "$(t finalizar_admin_portainer_pronto "$USER_PORTAINER_FINAL")"
 }
 
 # Compara duas versões "X.Y.Z" (semver simples, sem pré-release/build).
@@ -3021,18 +3126,6 @@ MSG_PT[ferramenta_traefik_e_portainer_admin_nao_confirmado]="⚠️  Admin ainda
 MSG_EN[ferramenta_traefik_e_portainer_admin_nao_confirmado]="⚠️  Admin not confirmed yet — restarting Portainer and trying again..."
 MSG_ES[ferramenta_traefik_e_portainer_admin_nao_confirmado]="⚠️  Admin aún no confirmado — reiniciando Portainer e intentando de nuevo..."
 
-MSG_PT[ferramenta_traefik_e_portainer_admin_pronto]="\e[32m✅ Admin do Portainer pronto (usuário: admin)!\e[0m"
-MSG_EN[ferramenta_traefik_e_portainer_admin_pronto]="\e[32m✅ Portainer admin ready (username: admin)!\e[0m"
-MSG_ES[ferramenta_traefik_e_portainer_admin_pronto]="\e[32m✅ ¡Admin de Portainer listo (usuario: admin)!\e[0m"
-
-MSG_PT[ferramenta_traefik_e_portainer_credenciais_nao_bateram]="\e[31m❌ Já existe um admin no Portainer, mas as credenciais digitadas não bateram.\e[0m"
-MSG_EN[ferramenta_traefik_e_portainer_credenciais_nao_bateram]="\e[31m❌ An admin already exists in Portainer, but the entered credentials did not match.\e[0m"
-MSG_ES[ferramenta_traefik_e_portainer_credenciais_nao_bateram]="\e[31m❌ Ya existe un admin en Portainer, pero las credenciales ingresadas no coincidieron.\e[0m"
-
-MSG_PT[ferramenta_traefik_e_portainer_use_credenciais_anteriores]="\e[31m   Use as credenciais da instalação anterior, ou remova o volume 'portainer_data' para recomeçar do zero.\e[0m"
-MSG_EN[ferramenta_traefik_e_portainer_use_credenciais_anteriores]="\e[31m   Use the credentials from the previous installation, or remove the 'portainer_data' volume to start from scratch.\e[0m"
-MSG_ES[ferramenta_traefik_e_portainer_use_credenciais_anteriores]="\e[31m   Use las credenciales de la instalación anterior, o elimine el volumen 'portainer_data' para comenzar de cero.\e[0m"
-
 MSG_PT[ferramenta_traefik_e_portainer_fim]="Fim."
 MSG_EN[ferramenta_traefik_e_portainer_fim]="Done."
 MSG_ES[ferramenta_traefik_e_portainer_fim]="Fin."
@@ -3417,34 +3510,10 @@ EOL
   fi
 
   USER_PORTAINER_FINAL=""
-  TOKEN_PORTAINER_FINAL=""
   CREDENCIAIS_APLICADAS=false
 
   if [ "$CONTA_CRIADA" = true ]; then
-    token=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
-      -s -X POST http://portainer_portainer:9000/api/auth \
-      -H "Content-Type: application/json" \
-      -d "$(jq -nc --arg p "$pass_portainer" '{username:"admin",password:$p}')" 2>/dev/null | jq -r .jwt)
-
-    if [ -n "$token" ] && [ "$token" != "null" ]; then
-      echo -e "$(t ferramenta_traefik_e_portainer_admin_pronto)"
-      CREDENCIAIS_APLICADAS=true
-      if [ "$PORTAINER_JA_INICIALIZADO" = true ]; then
-        # Reinstalação: o admin "admin"/$pass_portainer já existia (senha
-        # bate com o que foi digitado agora) — não mexe no username, que
-        # pode já ter sido customizado numa instalação anterior.
-        USER_PORTAINER_FINAL="admin"
-        TOKEN_PORTAINER_FINAL="$token"
-      else
-        renomear_admin_portainer_se_necessario "$nome_rede_interna" "$user_portainer_alvo" "$pass_portainer" "$token"
-      fi
-    elif [ "$PORTAINER_JA_INICIALIZADO" = true ]; then
-      # Reinstalação sobre admin pré-existente com credenciais diferentes
-      # das digitadas agora: as credenciais NÃO foram aplicadas. Não
-      # sobrescrever dados_portainer com informação enganosa.
-      echo -e "$(t ferramenta_traefik_e_portainer_credenciais_nao_bateram)"
-      echo -e "$(t ferramenta_traefik_e_portainer_use_credenciais_anteriores)"
-    fi
+    finalizar_admin_portainer "$nome_rede_interna" "$pass_portainer" "$user_portainer_alvo" "$PORTAINER_JA_INICIALIZADO"
   fi
 
   cd dados_vps
@@ -24181,40 +24250,10 @@ EOL
     done
   fi
 
-  local USER_PORTAINER_FINAL="" TOKEN_PORTAINER_FINAL="" CREDENCIAIS_APLICADAS=false
+  local USER_PORTAINER_FINAL="" CREDENCIAIS_APLICADAS=false
 
   if [ "$CONTA_CRIADA" = true ]; then
-    JSON_LOGIN=$(jq -n --arg p "$pass_portainer" '{username: "admin", password: $p}')
-    token=$(sudo docker run --rm --network "$nome_rede_interna" "${ENCHA_CURL_IMAGE}" \
-      -s -X POST http://portainer_portainer:9000/api/auth \
-      -H "Content-Type: application/json" \
-      -d "$JSON_LOGIN" 2>/dev/null | jq -r .jwt)
-
-    MSG_PT[instalar_traefik_e_portainer_admin_pronto]="\e[32m✅ Admin do Portainer pronto (usuário: admin)!\e[0m"
-    MSG_EN[instalar_traefik_e_portainer_admin_pronto]="\e[32m✅ Portainer admin ready (username: admin)!\e[0m"
-    MSG_ES[instalar_traefik_e_portainer_admin_pronto]="\e[32m✅ Admin de Portainer listo (usuario: admin)!\e[0m"
-
-    MSG_PT[instalar_traefik_e_portainer_admin_ja_existe]="\e[31m❌ Já existe um admin no Portainer, mas as credenciais digitadas não bateram.\e[0m"
-    MSG_EN[instalar_traefik_e_portainer_admin_ja_existe]="\e[31m❌ A Portainer admin already exists, but the entered credentials did not match.\e[0m"
-    MSG_ES[instalar_traefik_e_portainer_admin_ja_existe]="\e[31m❌ Ya existe un admin en Portainer, pero las credenciales ingresadas no coincidieron.\e[0m"
-
-    MSG_PT[instalar_traefik_e_portainer_admin_use_anteriores]="\e[31m   Use as credenciais da instalação anterior, ou remova o volume 'portainer_data' para recomeçar do zero.\e[0m"
-    MSG_EN[instalar_traefik_e_portainer_admin_use_anteriores]="\e[31m   Use the credentials from the previous installation, or remove the 'portainer_data' volume to start from scratch.\e[0m"
-    MSG_ES[instalar_traefik_e_portainer_admin_use_anteriores]="\e[31m   Use las credenciales de la instalación anterior, o elimine el volumen 'portainer_data' para empezar de cero.\e[0m"
-
-    if [ -n "$token" ] && [ "$token" != "null" ]; then
-      echo -e "$(t instalar_traefik_e_portainer_admin_pronto)"
-      CREDENCIAIS_APLICADAS=true
-      if [ "$PORTAINER_JA_INICIALIZADO" = true ]; then
-        USER_PORTAINER_FINAL="admin"
-        TOKEN_PORTAINER_FINAL="$token"
-      else
-        renomear_admin_portainer_se_necessario "$nome_rede_interna" "$user_portainer_alvo" "$pass_portainer" "$token"
-      fi
-    elif [ "$PORTAINER_JA_INICIALIZADO" = true ]; then
-      echo -e "$(t instalar_traefik_e_portainer_admin_ja_existe)"
-      echo -e "$(t instalar_traefik_e_portainer_admin_use_anteriores)"
-    fi
+    finalizar_admin_portainer "$nome_rede_interna" "$pass_portainer" "$user_portainer_alvo" "$PORTAINER_JA_INICIALIZADO"
   fi
 
   cd dados_vps
