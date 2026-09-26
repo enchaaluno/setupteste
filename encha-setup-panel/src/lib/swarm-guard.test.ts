@@ -381,6 +381,11 @@ describe("redeEhHost / compararNetworks", () => {
   it("Target undefined/ausente nunca é host", () => {
     expect(redeEhHost(undefined, "net-abc")).toBe(false);
   });
+
+  it("duas redes que não são host só são iguais com o mesmo Target (overlay A != overlay B)", () => {
+    expect(compararNetworks([{ Target: "overlay-a" }], [{ Target: "overlay-b" }], "net-abc")).toBe(false);
+    expect(compararNetworks([{ Target: "overlay-a" }], [{ Target: "overlay-a" }], "net-abc")).toBe(true);
+  });
 });
 
 describe("especificacaoDesejada", () => {

@@ -268,7 +268,9 @@ export function redeEhHost(target: string | undefined, hostNetworkId: string | n
 
 // Compara a lista `Networks` do TaskTemplate por posição (o spec do
 // `encha-guard` sempre tem exatamente uma entrada) usando `redeEhHost` para
-// tratar ID-resolvido e string-literal "host" como iguais.
+// tratar ID-resolvido e string-literal "host" como iguais. Duas redes que
+// NÃO são host só são iguais com o mesmo Target literal — "nenhuma das duas
+// é host" nunca basta (overlay A vs. overlay B é diferença real).
 export function compararNetworks(
   atual: NetworkAttachmentConfig[] | undefined,
   desejado: NetworkAttachmentConfig[] | undefined,
@@ -277,7 +279,12 @@ export function compararNetworks(
   const a = atual ?? [];
   const d = desejado ?? [];
   if (a.length !== d.length) return false;
-  return a.every((rede, i) => redeEhHost(rede.Target, hostNetworkId) === redeEhHost(d[i]?.Target, hostNetworkId));
+  return a.every((rede, i) => {
+    const atualHost = redeEhHost(rede.Target, hostNetworkId);
+    const desejadoHost = redeEhHost(d[i]?.Target, hostNetworkId);
+    if (atualHost || desejadoHost) return atualHost && desejadoHost;
+    return rede.Target === d[i]?.Target;
+  });
 }
 
 export type EspecificacaoDesejadaArgs = {
