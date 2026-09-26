@@ -165,9 +165,9 @@ O Usuário obriga-se, sob sua exclusiva responsabilidade, a observar o disposto 
 
 ### 8.2. Segurança de rede
 
-8.2.1. **Configurar, por seus próprios meios, o firewall e as demais medidas de proteção de rede do servidor não abrangidas pela proteção automática e de escopo limitado descrita na Cláusula 6.1**, cientes de que essa proteção não é um firewall de uso geral.
+8.2.1. **Configurar, por seus próprios meios, o firewall e as demais medidas de proteção de rede do servidor**, cientes de que a proteção automática descrita na Cláusula 6.1 é de escopo limitado, não constitui firewall de uso geral, não dispensa essas medidas e pode não estar presente ou ativa no servidor.
 
-8.2.2. O Usuário reconhece que **determinadas Stacks, quando por ele selecionadas, vinculam portas adicionais diretamente ao servidor** — entre elas as portas comumente associadas a serviços de banco de dados e de acesso remoto, relacionadas no Anexo II. **A proteção automática da Cláusula 6.1 não alcança essas portas.** Na ausência de firewall de uso geral configurado pelo próprio Usuário, tais serviços tornam-se acessíveis a partir da internet pública, com risco concreto de acesso não autorizado e de vazamento de dados. Cabe exclusivamente ao Usuário restringir esse acesso.
+8.2.2. O Usuário reconhece que **determinadas Stacks, quando por ele selecionadas, vinculam portas adicionais diretamente ao servidor** — entre elas as portas comumente associadas a serviços de banco de dados e de acesso remoto, relacionadas no Anexo II. **A proteção automática da Cláusula 6.1 não alcança essas portas. Na ausência de firewall de uso geral configurado pelo próprio Usuário, tais serviços tornam-se acessíveis a partir da internet pública, com risco concreto de acesso não autorizado e de vazamento de dados.** Cabe exclusivamente ao Usuário restringir esse acesso.
 
 ### 8.3. Credenciais e segredos
 
