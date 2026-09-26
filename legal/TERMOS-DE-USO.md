@@ -91,6 +91,7 @@ Para os fins deste instrumento, os termos abaixo têm o significado que lhes é 
 - **Solicitação e emissão de certificados digitais TLS junto à autoridade certificadora Let's Encrypt**, mediante desafio de validação por protocolo HTTP, o que exige que os nomes de domínio informados já estejam apontados para o endereço do servidor antes da execução.
 - Consulta a serviço externo de terceiro para descoberta do endereço de rede público do servidor.
 - Gravação, em diretório do servidor, de arquivo com os dados de configuração do ambiente.
+- Instalação e ativação da ferramenta fail2ban para o serviço de acesso remoto (SSH), nos termos da Cláusula 6.1.2.
 - Instalação, quando selecionada pelo Usuário, de quaisquer das Stacks disponíveis no catálogo, nos termos da Cláusula 9.
 
 4.4. O Instalador verifica sua própria atualidade e obtém automaticamente sua versão mais recente a cada execução, de modo que o conteúdo executado pode diferir daquele examinado pelo Usuário em ocasião anterior.
@@ -104,6 +105,7 @@ Para os fins deste instrumento, os termos abaixo têm o significado que lhes é 
 - Apresentação de catálogo das Stacks disponíveis.
 - Instalação assistida de um subconjunto das Stacks do catálogo, mediante formulário; para as demais, o Painel apenas indica o procedimento de instalação por linha de comando.
 - Listagem das Stacks em execução no servidor.
+- Criação e manutenção automáticas do mecanismo de proteção de rede de escopo limitado descrito na Cláusula 6.1.1.
 - Registro de auditoria das ações realizadas por meio do Painel.
 - Verificação de disponibilidade de novas versões e acionamento manual da rotina de atualização.
 - Exibição de conteúdo publicitário, na forma da Cláusula 15.
@@ -195,7 +197,7 @@ O Usuário obriga-se, sob sua exclusiva responsabilidade, a observar o disposto 
 
 ## 9. SOFTWARE DE TERCEIROS E LICENÇAS PRÓPRIAS
 
-9.1. As Stacks disponibilizadas no catálogo, bem como os componentes de infraestrutura instalados — plataforma de contêineres, proxy reverso e ferramenta de gerenciamento — **são obras de titularidade de terceiros, desenvolvidas, mantidas, licenciadas e suportadas por seus respectivos titulares, sem qualquer participação, ingerência ou responsabilidade da Encha.**
+9.1. As Stacks disponibilizadas no catálogo, bem como os componentes de infraestrutura instalados — plataforma de contêineres, proxy reverso, ferramenta de gerenciamento e ferramenta fail2ban — **são obras de titularidade de terceiros, desenvolvidas, mantidas, licenciadas e suportadas por seus respectivos titulares, sem qualquer participação, ingerência ou responsabilidade da Encha.**
 
 9.2. **A Encha limita-se a automatizar a obtenção e a configuração desses softwares.** A Encha não é sua autora, não os sublicencia, não os revende, não os representa, não presta suporte a eles e não responde por seu funcionamento, por sua segurança, por sua disponibilidade, por seus defeitos, por suas alterações de licenciamento ou por eventual cobrança que seus titulares venham a instituir.
 
@@ -457,7 +459,7 @@ Este Anexo integra estes Termos e detalha o disposto nas Cláusulas 8.2 e 9.
 
 ### II.1. Componentes de infraestrutura instalados
 
-Plataforma de contêineres Docker; orquestrador em modo cluster; proxy reverso Traefik, responsável pela vinculação das portas 80 e 443 e pela emissão automática de certificados; ferramenta de gerenciamento de contêineres Portainer, com sua respectiva conta administrativa. Todos são softwares de terceiros, regidos por suas próprias licenças.
+Plataforma de contêineres Docker; orquestrador em modo cluster; proxy reverso Traefik, responsável pela vinculação das portas 80 e 443 e pela emissão automática de certificados; ferramenta de gerenciamento de contêineres Portainer, com sua respectiva conta administrativa; ferramenta de prevenção de intrusão fail2ban, nas condições da Cláusula 6.1.2. Todos são softwares de terceiros, regidos por suas próprias licenças.
 
 ### II.2. Catálogo de Stacks
 
@@ -483,4 +485,4 @@ As senhas e chaves de aplicação geradas durante a instalação são gravadas e
 
 - **Versão 1** — vigente desde 28 de julho de 2026. Primeira versão integral destes Termos de Uso, substituindo o texto provisório anteriormente publicado sob a mesma identificação de versão.
 - **Versão 2** — vigente desde 31 de julho de 2026. Atualiza a Cláusula 5.2: o Painel passa a ter conta administrativa própria (usuário e senha definidos pelo Usuário na instalação, gravados em texto não cifrado na variável de ambiente da stack), além de guardar credencial de serviço da interface de gerenciamento de contêineres para atuar em nome do Usuário.
-- **Versão 3** — vigente desde 26 de setembro de 2026. Atualiza a Cláusula 6.1 e os itens correlatos (8.2.1, 8.2.2 e Anexo II.3): os Produtos passam a configurar automaticamente uma proteção de rede de escopo limitado — bloqueio das portas internas do orquestrador em modo cluster e limite de taxa de novas conexões à porta 22 (SSH), quando o servidor opera como nó único do orquestrador; e ativação do fail2ban contra tentativas repetidas de acesso remoto, automática nas instalações feitas ou refeitas pelo Instalador e por comando manual nas demais. Essa proteção não constitui firewall de uso geral nem alcança as portas adicionais vinculadas pelas Stacks do catálogo. Atualiza também a Cláusula 5.2: nas instalações feitas ou refeitas pelo Instalador, as senhas da conta administrativa do Painel e da credencial de serviço passam a ser guardadas como segredo da plataforma de contêineres, e não mais em variável de ambiente.
+- **Versão 3** — vigente desde 26 de setembro de 2026. Atualiza a Cláusula 6.1 e os itens correlatos (4.3, 5.1, 8.2.1, 8.2.2, 9.1, Anexo II.1 e Anexo II.3): os Produtos passam a configurar automaticamente uma proteção de rede de escopo limitado — bloqueio das portas internas do orquestrador em modo cluster e limite de taxa de novas conexões à porta 22 (SSH), quando o servidor opera como nó único do orquestrador; e ativação do fail2ban contra tentativas repetidas de acesso remoto, automática nas instalações feitas ou refeitas pelo Instalador e por comando manual nas demais. Essa proteção não constitui firewall de uso geral nem alcança as portas adicionais vinculadas pelas Stacks do catálogo. Atualiza também a Cláusula 5.2: nas instalações feitas ou refeitas pelo Instalador, as senhas da conta administrativa do Painel e da credencial de serviço passam a ser guardadas como segredo da plataforma de contêineres, e não mais em variável de ambiente.
