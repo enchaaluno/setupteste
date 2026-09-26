@@ -1,6 +1,6 @@
 import { Agent, fetch as undiciFetch, FormData, File } from "undici";
-import { readFileSync } from "node:fs";
 import { jwtExpiryMs } from "./jwt";
+import { lerSegredo } from "./security/segredo";
 
 const PORTAINER_URL = process.env.PORTAINER_URL ?? "http://portainer:9000";
 const TLS_INSECURE =
@@ -127,10 +127,11 @@ export function invalidateServiceToken(): void {
 
 async function authenticateService(): Promise<string> {
   const user = process.env.PORTAINER_USER;
-  const passwordFile = process.env.PORTAINER_PASSWORD_FILE;
-  const password = passwordFile
-    ? readFileSync(passwordFile, "utf8").trim()
-    : process.env.PORTAINER_PASSWORD;
+  // Resolvedor único (C3, M3) — env direta vence sobre PORTAINER_PASSWORD_FILE;
+  // ver src/lib/security/segredo.ts. `hasServiceCredentials` (local-admin.ts)
+  // usa o mesmo resolvedor, então os dois lugares nunca divergem sobre se a
+  // credencial de serviço está disponível.
+  const password = lerSegredo("PORTAINER_PASSWORD");
   if (!user || !password) {
     throw new PortainerError(
       503,
