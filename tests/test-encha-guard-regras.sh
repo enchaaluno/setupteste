@@ -646,6 +646,145 @@ else
   falha "PID 1: sem trap de TERM (o docker stop espera o SIGKILL) ou o handler chama o nft"
 fi
 
+# --- 9. C7 (achado A2): limite de taxa de NOVAS conexões SSH -------------
+#
+# Mitigação automática para as VPS existentes que não vão rodar o fail2ban de
+# verdade do C10 (decisão do Carlos, 2026-09-25): limite de taxa de NOVAS
+# conexões SSH por IP de origem dentro do próprio nft, sem derrubar sessões
+# já abertas.
+
+# 9a. Default (sem ENCHA_GUARD_SSH_PORTAS): porta 22, "ct state new" e o
+# limite exatos do plano — 20/minute, burst 30 packets.
+saida_ssh_default="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO ENCHA_GUARD_SSH_PORTAS
+  renderizar
+)"
+if echo "$saida_ssh_default" | grep -qF 'tcp dport { 22 } ct state new limit rate over 20/minute burst 30 packets drop'; then
+  ok "SSH: default (sem env var) -> porta 22, ct state new, limit rate over 20/minute burst 30 packets drop"
+else
+  falha "SSH: default não gerou a regra esperada (porta 22, ct state new, limite do plano)"
+  echo "$saida_ssh_default" | grep 'ct state'
+fi
+
+# 9b. Duas portas, espaço OU vírgula como separador (mesmo padrão de
+# ENCHA_GUARD_PEERS/ENCHA_GUARD_PERMITIR).
+saida_ssh_2portas="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_SSH_PORTAS="22 2222"
+  export ENCHA_GUARD_SSH_PORTAS
+  renderizar
+)"
+if echo "$saida_ssh_2portas" | grep -qF 'tcp dport { 22,2222 } ct state new'; then
+  ok "SSH: ENCHA_GUARD_SSH_PORTAS=\"22 2222\" -> as duas portas juntas no dport"
+else
+  falha "SSH: as duas portas customizadas (espaço) não apareceram juntas no dport"
+  echo "$saida_ssh_2portas" | grep 'ct state'
+fi
+
+saida_ssh_2portas_virgula="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_SSH_PORTAS="22,2222"
+  export ENCHA_GUARD_SSH_PORTAS
+  renderizar
+)"
+if echo "$saida_ssh_2portas_virgula" | grep -qF 'tcp dport { 22,2222 } ct state new'; then
+  ok "SSH: vírgula como separador produz o mesmo resultado que espaço"
+else
+  falha "SSH: vírgula como separador não produziu o mesmo resultado que espaço"
+fi
+
+# 9c. Porta inválida (fora de faixa, ou não-numérica) misturada com válidas:
+# descartada e logada, as válidas continuam — nunca a lista inteira cai.
+saida_ssh_invalida="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_SSH_PORTAS="22 99999 2222"
+  export ENCHA_GUARD_SSH_PORTAS
+  renderizar 2>"$TMP_TESTE/stderr-ssh-invalida.log"
+)"
+if echo "$saida_ssh_invalida" | grep -qF 'tcp dport { 22,2222 } ct state new' \
+    && ! echo "$saida_ssh_invalida" | grep -qF '99999'; then
+  ok "SSH: porta fora de faixa (99999) descartada, portas válidas (22, 2222) continuam"
+else
+  falha "SSH: porta fora de faixa não foi descartada corretamente"
+  echo "$saida_ssh_invalida" | grep 'ct state'
+fi
+if grep -qi 'porta ssh descartada' "$TMP_TESTE/stderr-ssh-invalida.log" 2>/dev/null; then
+  ok "SSH: porta descartada foi logada em stderr"
+else
+  falha "SSH: porta descartada não foi logada em stderr"
+fi
+
+saida_ssh_letras="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_SSH_PORTAS="22 abc"
+  export ENCHA_GUARD_SSH_PORTAS
+  renderizar
+)"
+if echo "$saida_ssh_letras" | grep -qF 'tcp dport { 22 } ct state new' \
+    && ! echo "$saida_ssh_letras" | grep -qF 'abc'; then
+  ok "SSH: entrada não-numérica ('abc') descartada, porta válida (22) continua"
+else
+  falha "SSH: entrada não-numérica não foi descartada corretamente"
+  echo "$saida_ssh_letras" | grep 'ct state'
+fi
+
+# 9d. ENCHA_GUARD_SSH_PORTAS="" explícito: a regra de rate-limit SOME do
+# ruleset (mesmo padrão condicional de pares4/pares6 quando vazios), mas as
+# outras regras continuam normais.
+saida_ssh_vazio="$(
+  unset ENCHA_GUARD_PEERS ENCHA_GUARD_PERMITIR ENCHA_GUARD_DESATIVADO
+  ENCHA_GUARD_SSH_PORTAS=""
+  export ENCHA_GUARD_SSH_PORTAS
+  renderizar
+)"
+if echo "$saida_ssh_vazio" | grep -q 'ct state new'; then
+  falha "SSH: ENCHA_GUARD_SSH_PORTAS=\"\" deveria remover a regra de rate-limit, mas ela apareceu"
+else
+  ok "SSH: ENCHA_GUARD_SSH_PORTAS=\"\" (vazio explícito) remove a regra de rate-limit"
+fi
+if echo "$saida_ssh_vazio" | grep -q 'iif "lo" accept' \
+    && echo "$saida_ssh_vazio" | grep -q 'tcp dport { 2377, 7946 } counter drop' \
+    && echo "$saida_ssh_vazio" | grep -q 'udp dport { 4789, 7946 } counter drop'; then
+  ok "SSH: com a regra de rate-limit ausente, as outras regras (lo, drops fixos) continuam normais"
+else
+  falha "SSH: outras regras não sobreviveram à ausência da regra de rate-limit"
+fi
+
+# 9e. Regressão do C7 ("tira ct state new, sessões estabelecidas ficam
+# limitadas"): "ct state new" tem que estar SEMPRE presente na MESMA regra
+# do rate-limit — não apenas em algum lugar do arquivo, mas antes do "limit
+# rate" daquela linha. Esta é a prova de mutação: um "ct state new" removido
+# do gerador faria esta asserção falhar imediatamente.
+linha_regra_ssh="$(printf '%s\n' "$saida_ssh_default" | grep 'limit rate over 20/minute')"
+case "$linha_regra_ssh" in
+  *'ct state new'*'limit rate over 20/minute burst 30 packets drop'*)
+    ok "regressão C7: a regra de rate-limit SSH contém 'ct state new' antes do 'limit rate' (sessões já abertas não são afetadas)"
+    ;;
+  *)
+    falha "regressão C7: 'ct state new' ausente (ou fora de ordem) na regra de rate-limit SSH — sessões SSH já abertas cairiam sob o limite"
+    ;;
+esac
+
+# 9f. Ordem: a regra de rate-limit SSH vem ANTES dos drops fixos de
+# 2377/7946/4789 (leitura lógica: lo -> pares -> rate-limit SSH -> drops).
+pos_ssh="$(printf '%s\n' "$saida_ssh_default" | grep -n 'ct state new' | head -1 | cut -d: -f1)"
+pos_drop_swarm="$(printf '%s\n' "$saida_ssh_default" | grep -n 'tcp dport { 2377, 7946 } counter drop' | head -1 | cut -d: -f1)"
+if [ -n "$pos_ssh" ] && [ -n "$pos_drop_swarm" ] && [ "$pos_ssh" -lt "$pos_drop_swarm" ]; then
+  ok "SSH: a regra de rate-limit vem antes dos drops fixos de 2377/7946/4789"
+else
+  falha "SSH: a regra de rate-limit não vem antes dos drops fixos (ssh=$pos_ssh drop=$pos_drop_swarm)"
+fi
+
+# 9g. Sintaxe real (nft -c), se disponível — mesmo guard de disponibilidade
+# e mesma função "validar_sintaxe" da seção 7 (definida só quando o "nft"
+# real existe e fala com o netlink).
+if command -v nft >/dev/null 2>&1 && echo 'table inet encha_guard_sonda {}' | nft -c -f - >/dev/null 2>&1; then
+  validar_sintaxe "SSH: default (porta 22)" "$saida_ssh_default"
+  validar_sintaxe "SSH: portas customizadas (22,2222)" "$saida_ssh_2portas"
+else
+  echo "ℹ️  'nft' real indisponível — pulando a validação de sintaxe real das regras de rate-limit SSH (seção 9 acima já cobre a geração)."
+fi
+
 echo ""
 [ "$falhas" -eq 0 ] || exit 1
 echo "✅ todos os testes de encha-guard.sh passaram"
