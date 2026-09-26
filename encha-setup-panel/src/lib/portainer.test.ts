@@ -50,7 +50,13 @@ describe("authenticateService / getServiceToken (credencial de serviço do Porta
     return import("./portainer");
   }
 
-  it("PORTAINER_PASSWORD_FILE sozinho (sem env direta) autentica com sucesso (RED do bug do 503)", async () => {
+  // Não é o RED do 503: a lógica antiga de authenticateService já lia o
+  // _FILE sozinho (o 503 vinha de hasServiceCredentials, coberto em
+  // auth/local-admin.test.ts). Este caso fixa que a troca pelo lerSegredo
+  // não perdeu o suporte que já existia. Os que falham contra o código
+  // anterior são "env direta vence" (o antigo dava prioridade ao _FILE) e
+  // "arquivo inexistente" (o antigo vazava o ENOENT cru em vez do 503).
+  it("PORTAINER_PASSWORD_FILE sozinho (sem env direta) autentica com sucesso", async () => {
     process.env.PORTAINER_USER = "svc";
     process.env.PORTAINER_PASSWORD_FILE = arquivoCom("senha-do-arquivo\n");
 
